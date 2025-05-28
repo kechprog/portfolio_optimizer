@@ -12,14 +12,14 @@ import uuid
 
 from .allocator import PortfolioAllocator, PAL
 try:
-    from ..data_getter import YahooFinanceDataGetter
+    from ..data_getter import TradingViewDataGetter
 except ImportError:
     import sys
     import os
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
-    from data_getter import YahooFinanceDataGetter
+    from data_getter import TradingViewDataGetter
 
 class MarkovitsAllocator(PortfolioAllocator):
     OPTIMIZATION_TARGETS = {
@@ -66,7 +66,7 @@ class MarkovitsAllocator(PortfolioAllocator):
         price_data_type = 'Adj Close' # Adjusted Close is generally preferred
         
         try:
-            raw_data = YahooFinanceDataGetter.fetch(
+            raw_data = TradingViewDataGetter.fetch(
                 self._instruments, fitting_start_date, fitting_end_date, interval="1d"
             )
         except Exception as e:
@@ -75,7 +75,7 @@ class MarkovitsAllocator(PortfolioAllocator):
             return {}
 
         if raw_data.empty:
-            print(f"WARNING ({self.name}): No data from YahooFinanceDataGetter.")
+            print(f"WARNING ({self.name}): No data from TradingViewDataGetter.")
             self._allocations = {}
             return {}
 

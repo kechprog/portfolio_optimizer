@@ -17,7 +17,7 @@ from allocator.allocator import PortfolioAllocator
 from allocator.manual import ManualAllocator
 from allocator.markovits import MarkovitsAllocator
 try:
-    from data_getter import YahooFinanceDataGetter
+    from data_getter import TradingViewDataGetter
 except ImportError:
     print("Attempting to import data_getter from parent directory for development context.")
     import sys
@@ -419,7 +419,7 @@ class App:
             # Fetch from plot_start_dt - timedelta(days=7) to ensure we get a trading day before plot_start_dt
             # Then filter the returns from plot_start_dt onwards.
             fetch_plot_data_start = plot_start_dt - timedelta(days=7) 
-            raw_hist_data = YahooFinanceDataGetter.fetch(
+            raw_hist_data = TradingViewDataGetter.fetch(
                 all_instruments_for_plot_data, fetch_plot_data_start, plot_actual_end_dt, interval="1d"
             )
             # ... (data extraction for historical_prices_for_plot same as before, ensure it uses 'Adj Close' or 'Close')
