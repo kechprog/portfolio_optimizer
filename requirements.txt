@@ -1,0 +1,7 @@
+matplotlib
+pandas
+yfinance
+python-dotenv
+numpy
+pyportfolioopt
+scikit-learn
