@@ -1,15 +1,10 @@
-# allocator.py
+# portfolio_optimizer/allocator/allocator.py
 
 from abc import ABC, abstractmethod
-from datetime import date, timedelta
-# pandas might be used by other allocators for data manipulation if they fetch price data
-# For now, ManualAllocator doesn't directly use it in prepare_plot_data beyond date iteration.
-# import pandas as pd
-from typing import Set, Dict, List, Optional, Type
+from datetime import date
+from typing import Set, Dict, Optional, Type, Any # Added Any for save_state return
 
-import matplotlib.axes
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
 
 class PortfolioAllocator(ABC):
     """
@@ -18,12 +13,7 @@ class PortfolioAllocator(ABC):
     """
     def __init__(self, name: str):
         self.name: str = name
-        # Allocations are typically set during creation by configure_or_create
         self._allocations: Dict[str, float] = {} # Should always be 0.0-1.0 scale
-        # Internal data for plotting, prepared by prepare_plot_data
-        self._plot_dates: List[date] = []
-        self._plot_values: List[float] = []
-        # is_enabled flag will be managed by app.py externally
 
     @property
     def allocations(self) -> Dict[str, float]:
@@ -34,48 +24,50 @@ class PortfolioAllocator(ABC):
     def on_instruments_changed(self, new_instrument_set: Set[str]) -> None:
         """
         Called when the set of instruments in the main portfolio changes.
-        The allocator should adjust its internal state/allocations for the current instance.
-        This method modifies the existing instance.
+        The allocator should adjust its internal state for the current instance.
         """
         pass
 
     @classmethod
     @abstractmethod
-    def configure_or_create(cls: Type['PAL'], # PAL is a TypeVar representing a subclass of PortfolioAllocator
+    def configure_or_create(cls: Type['PAL'],
                             parent_window: tk.Misc,
                             current_instruments: Set[str],
                             existing_allocator: Optional['PortfolioAllocator'] = None,
                            ) -> Optional['PAL']:
         """
-        Opens a configuration dialog to create a new allocator instance or
-        reconfigure settings based on an existing one.
+        Opens a configuration dialog to create/reconfigure an allocator instance.
+        """
+        pass
+
+    @abstractmethod
+    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date) -> Dict[str, float]:
+        """
+        Computes and returns portfolio allocations, also storing them in self._allocations.
+        """
+        pass
+
+    @abstractmethod
+    def save_state(self) -> Dict[str, Any]:
+        """
+        Serializes the allocator's configuration into a dictionary.
+        This dictionary should contain all necessary parameters to recreate
+        the allocator's specific state, excluding the name (which is handled by App).
+        """
+        pass
+
+    @abstractmethod
+    def load_state(self, config_params: Dict[str, Any], current_instruments: Set[str]) -> None:
+        """
+        Restores the allocator's state from a dictionary of configuration parameters.
+        This method is called after the allocator instance is created with its name.
 
         Args:
-            parent_window: The Tkinter parent window for the dialog.
-            current_instruments: The current set of instruments to configure for.
-            existing_allocator: An optional existing allocator instance. If provided,
-                                its settings (name, allocations) are used as defaults
-                                in the configuration dialog.
-
-        Returns:
-            A new, configured instance of the PortfolioAllocator subclass,
-            or None if the configuration is cancelled.
+            config_params: The dictionary of parameters from save_state.
+            current_instruments: The set of instruments currently active in the app,
+                                 which the allocator might need to reconcile with its loaded state.
         """
         pass
 
-
-    @abstractmethod
-    def prepare_plot_data(self, fitting_start_date_of_plot: date, plot_end_date: date) -> None:
-        """
-        Prepares any data needed for draw_plot based on current allocations,
-        selected dates, and potentially external data. This method modifies the instance.
-        """
-        pass
-
-    @abstractmethod
-    def draw_plot(self, ax: matplotlib.axes.Axes) -> None:
-        """
-        Draws the allocator's contribution to the plot on the provided Matplotlib Axes.
-        This method should ONLY draw its data series.
-        """
-        pass
+from typing import TypeVar
+PAL = TypeVar('PAL', bound='PortfolioAllocator')

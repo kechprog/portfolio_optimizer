@@ -201,63 +201,11 @@ class YahooFinanceDataGetter(DataGetter):
 
 
 if __name__ == '__main__':
-    print("--- Testing DataGetter ---")
-
-    # Test YahooFinanceDataGetter
-    instruments1 = {'AAPL', 'MSFT'}
-    start_dt1 = date(2023, 1, 1)
-    end_dt1 = date(2023, 1, 10)
-
-    print(f"\n--- 1. First Fetch (AAPL, MSFT) from {start_dt1} to {end_dt1}, interval 'd' ---")
-    df1 = YahooFinanceDataGetter.fetch(instruments1, start_dt1, end_dt1, interval="d")
-    print("Fetched DataFrame head:")
-    print(df1.head())
-    if not df1.empty:
-        print("\nDataFrame columns:", df1.columns)
-        if isinstance(df1.columns, pd.MultiIndex):
-            print("Column names:", df1.columns.names)
-            print("Example data for AAPL Open:", df1[('Open', 'AAPL')].head(2) if ('Open','AAPL') in df1 else "N/A")
-
-    print(f"\n--- 2. Second Fetch (AAPL, MSFT) - Should be from cache ---")
-    df2 = YahooFinanceDataGetter.fetch(instruments1, start_dt1, end_dt1, interval="d")
-    # print(df2.head()) # Verify it's the same if needed
-
-    print(f"\n--- 3. Fetch single instrument (GOOG) from {start_dt1} to {end_dt1} ---")
-    df_goog = YahooFinanceDataGetter.fetch({'GOOG'}, start_dt1, end_dt1, interval="1d")
-    print("GOOG DataFrame head:")
-    print(df_goog.head())
-    if not df_goog.empty:
-        print("\nGOOG DataFrame columns:", df_goog.columns)
-
-    start_dt2 = date(2023, 2, 1)
-    end_dt2 = date(2023, 2, 5)
-    print(f"\n--- 4. Fetch different date range (MSFT) from {start_dt2} to {end_dt2} ---")
-    df_msft_new_range = YahooFinanceDataGetter.fetch({'MSFT'}, start_dt2, end_dt2)
-    print("MSFT (new range) DataFrame head:")
-    print(df_msft_new_range.head())
-
-    print("\n--- 5. Clearing YahooFinanceDataGetter cache ---")
-    YahooFinanceDataGetter.clear_cache()
-    print(f"Cache size after clear: {len(YahooFinanceDataGetter._cache)}")
-
-    print("\n--- 6. Fetch after cache clear (AAPL, MSFT) - Should be from API again ---")
-    df3 = YahooFinanceDataGetter.fetch(instruments1, start_dt1, end_dt1, interval="1d")
-    # print(df3.head()) # Verify it's fetched again
-
-    print("\n--- 7. Fetch empty instrument set ---")
-    df_empty_set = YahooFinanceDataGetter.fetch(set(), start_dt1, end_dt1)
-    print(f"DataFrame for empty set is empty: {df_empty_set.empty}")
-
-    print("\n--- 8. Fetch for a non-existent ticker (should be empty or handle gracefully) ---")
-    df_bad_ticker = YahooFinanceDataGetter.fetch({'NONEXISTENTTICKER12345'}, start_dt1, end_dt1)
-    print(f"DataFrame for non-existent ticker is empty: {df_bad_ticker.empty}")
-    print(df_bad_ticker.head())
-
-    print("\n--- 9. Fetch for a very short future period (should be empty) ---")
-    future_start = date.today() + timedelta(days=60)
-    future_end = date.today() + timedelta(days=65)
-    df_future = YahooFinanceDataGetter.fetch({'AAPL'}, future_start, future_end)
-    print(f"DataFrame for future period is empty: {df_future.empty}")
-    print(df_future.head())
-    
-    print("\n--- Test Done ---")
+    import datetime
+    from datetime import date
+    print(YahooFinanceDataGetter.fetch(
+            {"AAPL", "NVDA", "SPY"},
+            date.today() - datetime.timedelta(weeks=22),
+            date.today(),
+            interval="1d"
+        ).loc[:, "Close"].head(n=22))
