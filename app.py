@@ -16,13 +16,16 @@ from typing import Optional, Set, Dict, Type, Any, List
 from allocator.allocator import PortfolioAllocator
 from allocator.manual import ManualAllocator
 from allocator.markovits import MarkovitsAllocator
+
 try:
-    from data_getter import TradingViewDataGetter
+    from data_getter import AlphaVantageDataGetter
+    Fetcher = AlphaVantageDataGetter
 except ImportError:
     print("Attempting to import data_getter from parent directory for development context.")
     import sys
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
     from data_getter import YahooFinanceDataGetter
+    Fetcher = AlphaVantageDataGetter
 
 
 GEAR_ICON = "\u2699"
@@ -81,6 +84,13 @@ class App:
         self.global_update_button.pack(side="left", fill="x", expand=True, ipady=5, padx=(0,2))
         self.save_state_button = ttk.Button(action_button_bar, text="SAVE STATE", command=self._save_application_state, style="Info.TButton")
         self.save_state_button.pack(side="left", fill="x", expand=True, ipady=5, padx=(2,0))
+        
+        # Add checkbox for plotting with dividends
+        self.plot_dividends_var = tk.BooleanVar(value=False)
+        self.plot_dividends_checkbox = ttk.Checkbutton(self.top_right_controls_frame, 
+                                                    text="Plot with Dividends", 
+                                                    variable=self.plot_dividends_var)
+        self.plot_dividends_checkbox.pack(pady=(0, 5), fill='x')
         
         date_config_frame = ttk.Frame(self.top_right_controls_frame)
         date_config_frame.pack(fill="x", pady=(0,10))
@@ -419,18 +429,24 @@ class App:
             # Fetch from plot_start_dt - timedelta(days=7) to ensure we get a trading day before plot_start_dt
             # Then filter the returns from plot_start_dt onwards.
             fetch_plot_data_start = plot_start_dt - timedelta(days=7) 
-            raw_hist_data = TradingViewDataGetter.fetch(
-                all_instruments_for_plot_data, fetch_plot_data_start, plot_actual_end_dt, interval="1d"
+            raw_hist_data = Fetcher.fetch(
+                all_instruments_for_plot_data, fetch_plot_data_start, plot_actual_end_dt, 
+                include_dividends=self.plot_dividends_var.get(), interval="1d"
             )
             # ... (data extraction for historical_prices_for_plot same as before, ensure it uses 'Adj Close' or 'Close')
             if not raw_hist_data.empty:
                 temp_price_frames = []
                 for ticker in all_instruments_for_plot_data:
                     price_series = None
-                    if ('Adj Close', ticker) in raw_hist_data.columns: price_series = raw_hist_data[('Adj Close', ticker)]
-                    elif ('Close', ticker) in raw_hist_data.columns: price_series = raw_hist_data[('Close', ticker)]
-                    elif 'Adj Close' in raw_hist_data.columns and len(all_instruments_for_plot_data)==1 and ticker in raw_hist_data.columns.get_level_values(1):
-                        price_series = raw_hist_data['Adj Close'].iloc[:,0]
+                    # Always prefer 'Close' column - data_getter has already adjusted it for dividends if needed
+                    if ('Close', ticker) in raw_hist_data.columns:
+                        price_series = raw_hist_data[('Close', ticker)]
+                    elif 'Close' in raw_hist_data.columns and len(all_instruments_for_plot_data) == 1 and ticker in raw_hist_data.columns.get_level_values(1):
+                        price_series = raw_hist_data['Close'].iloc[:,0]
+                    elif ('Close', ticker.upper()) in raw_hist_data.columns:
+                        price_series = raw_hist_data[('Close', ticker.upper())]
+                    elif 'Close' in raw_hist_data.columns and len(all_instruments_for_plot_data) == 1 and ticker.upper() in raw_hist_data.columns.get_level_values(1):
+                        price_series = raw_hist_data['Close'].iloc[:,0]
 
                     if price_series is not None and not price_series.isnull().all():
                         price_series_filled = price_series.ffill().bfill()
@@ -546,6 +562,9 @@ class App:
                 "id": aid, "type_name": allocator_type_name, "instance_name": instance.name,
                 "is_enabled": data['is_enabled_var'].get(), "config_params": config_params
             })
+        # Add plot dividends state to saved state
+        state["plot_dividends"] = self.plot_dividends_var.get()
+        
         try:
             with open(SAVE_STATE_FILENAME, 'w') as f: json.dump(state, f, indent=4)
             self.set_status("Application state saved successfully.", success=True)
@@ -572,6 +591,14 @@ class App:
             self.fit_start_date_entry.insert(0, state.get("fit_start_date", (date.today() - timedelta(days=365*2)).strftime("%Y-%m-%d"))) # Updated key
             self.fit_end_date_entry.delete(0, tk.END)
             self.fit_end_date_entry.insert(0, state.get("fit_end_date", (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")))   # Updated key
+
+            # Restore plot dividends state if present
+            if state.get("plot_dividends", False):
+                self.plot_dividends_var.set(True)
+                self.plot_dividends_checkbox.state(['selected'])
+            else:
+                self.plot_dividends_var.set(False)
+                self.plot_dividends_checkbox.state(['!selected'])
 
             self.allocators_store.clear()
             # ... (rest of load logic using instance.load_state() is same as previous response)

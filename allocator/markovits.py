@@ -12,14 +12,18 @@ import uuid
 
 from .allocator import PortfolioAllocator, PAL
 try:
-    from ..data_getter import TradingViewDataGetter
+    # from ..data_getter import AlphaVantageDataGetter
+    from ..data_getter import YahooFinanceDataGetter
+    Fetcher = YahooFinanceDataGetter
 except ImportError:
     import sys
     import os
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
-    from data_getter import TradingViewDataGetter
+    # from data_getter import AlphaVantageDataGetter
+    from data_getter import YahooFinanceDataGetter
+    Fetcher = YahooFinanceDataGetter
 
 class MarkovitsAllocator(PortfolioAllocator):
     OPTIMIZATION_TARGETS = {
@@ -66,8 +70,12 @@ class MarkovitsAllocator(PortfolioAllocator):
         price_data_type = 'Adj Close' # Adjusted Close is generally preferred
         
         try:
-            raw_data = TradingViewDataGetter.fetch(
-                self._instruments, fitting_start_date, fitting_end_date, interval="1d"
+            raw_data = Fetcher.fetch(
+                # Normalize to uppercase for Alpha Vantage compatibility
+                {t.upper() for t in self._instruments},
+                fitting_start_date,
+                fitting_end_date,
+                interval="1d"
             )
         except Exception as e:
             print(f"ERROR ({self.name}): Data fetching failed: {e}")
@@ -75,58 +83,73 @@ class MarkovitsAllocator(PortfolioAllocator):
             return {}
 
         if raw_data.empty:
-            print(f"WARNING ({self.name}): No data from TradingViewDataGetter.")
+            print(f"WARNING ({self.name}): No data from fetcher.")
             self._allocations = {}
             return {}
-
+            
+        # Create mapping for normalized ticker (uppercase) to original ticker
+        ticker_mapping = {t.upper(): t for t in self._instruments}
+        
         prices_df_list = []
         valid_instruments_for_alloc = set()
-        for ticker in self._instruments:
-            # Try to get ('Adj Close', 'TICKER') first
-            if (price_data_type, ticker) in raw_data.columns:
-                ticker_prices = raw_data[(price_data_type, ticker)].dropna()
-            # Fallback to 'Close' if 'Adj Close' is not present for that ticker
-            elif ('Close', ticker) in raw_data.columns:
-                print(f"INFO ({self.name}): '{price_data_type}' not found for {ticker}, using 'Close'.")
-                ticker_prices = raw_data[('Close', ticker)].dropna()
-            # Handle single ticker case where yfinance might return flat columns
-            elif price_data_type in raw_data.columns and len(self._instruments) == 1 and raw_data.columns.name == ticker: # yfinance flat df
-                 ticker_prices = raw_data[price_data_type].dropna()
-            elif 'Adj Close' in raw_data.columns and len(self._instruments) == 1 and ticker in raw_data.columns.get_level_values(1): # single instrument, multi-level but field is top
-                 ticker_prices = raw_data['Adj Close'].iloc[:,0].dropna() # first column if single ticker
+        available_fields = raw_data.columns.get_level_values(0)
+        
+        for ticker_upper in [t.upper() for t in self._instruments]:
+            original_ticker = ticker_mapping.get(ticker_upper)
+            
+            # Prioritize 'Adj Close' but fall back to 'Close' if needed
+            if (price_data_type, ticker_upper) in raw_data.columns:
+                price_series = raw_data[(price_data_type, ticker_upper)]
+            elif ('Close', ticker_upper) in raw_data.columns:
+                price_data_type = 'Close'
+                price_series = raw_data[('Close', ticker_upper)]
+                print(f"INFO ({self.name}): Using 'Close' data for {original_ticker}")
             else:
-                print(f"WARNING ({self.name}): Price data for {ticker} (tried '{price_data_type}', 'Close') not found. Columns: {raw_data.columns}")
+                print(f"WARNING ({self.name}): Price data for {original_ticker} not found. Columns: {[col for col in raw_data.columns if col[1] == ticker_upper]}")
                 continue
 
+            # Handle NaN values
+            ticker_prices = price_series.dropna().copy()
+            
             if not ticker_prices.empty:
-                prices_df_list.append(ticker_prices.rename(ticker))
-                valid_instruments_for_alloc.add(ticker)
+                prices_df_list.append(ticker_prices.rename(original_ticker))
+                valid_instruments_for_alloc.add(original_ticker)
             else:
-                print(f"WARNING ({self.name}): All price data for {ticker} was NaN.")
+                print(f"WARNING ({self.name}): All price data for {original_ticker} was NaN.")
         
         if not prices_df_list:
             print(f"WARNING ({self.name}): No valid price data for any instrument. Cannot compute.")
-            self._allocations = {inst:0.0 for inst in self._instruments} # Ensure all original instruments get 0
-            return self._allocations.copy()
-            
-        prices = pd.concat(prices_df_list, axis=1).sort_index() # Sort index just in case
-        prices = prices.ffill().bfill() # Fill any remaining NaNs after concat
-
-        # Ensure all columns in prices still have non-NaN data after ffill/bfill
-        prices.dropna(axis=1, how='all', inplace=True)
-        if prices.empty or prices.shape[1] == 0:
-             print(f"WARNING ({self.name}): Price data became empty after NaN handling for columns.")
-             self._allocations = {inst:0.0 for inst in self._instruments}
-             return self._allocations.copy()
-
-        # Update valid_instruments_for_alloc based on actual columns in prices
-        valid_instruments_for_alloc = set(prices.columns)
-
-
-        if prices.shape[0] < 2:
-            print(f"WARNING ({self.name}): Not enough historical data points ({prices.shape[0]}) after processing for {valid_instruments_for_alloc}.")
             self._allocations = {inst:0.0 for inst in self._instruments}
             return self._allocations.copy()
+            
+        # Ensure proper alignment and fill missing values
+        prices = pd.concat(prices_df_list, axis=1)
+        # Use first valid index date across all series
+        all_start = max([s.first_valid_index() for s in prices_df_list])
+        all_end = min([s.last_valid_index() for s in prices_df_list])
+        prices = prices.loc[all_start:all_end].sort_index()
+        
+        # Forward fill then backfill
+        prices = prices.ffill().bfill()
+
+        # Check data integrity
+        if prices.shape[0] < 2:
+            print(f"WARNING ({self.name}): Not enough historical data points ({prices.shape[0]}) after processing.")
+            self._allocations = {t:0.0 for t in self._instruments}
+            return self._allocations.copy()
+            
+        # Verify no empty columns
+        empty_cols = prices.columns[prices.isnull().all()]
+        if any(empty_cols):
+            print(f"WARNING ({self.name}): Columns with all NaN values: {list(empty_cols)}")
+            prices = prices.drop(columns=empty_cols)
+            # Update valid instruments by removing those with empty data
+            valid_instruments_for_alloc -= set(empty_cols)
+            
+        if prices.empty or prices.shape[1] == 0:
+             print(f"WARNING ({self.name}): Price data became empty after NaN handling. Columns: {prices.columns}")
+             self._allocations = {inst:0.0 for inst in self._instruments}
+             return self._allocations.copy()
 
         try:
             mu = expected_returns.mean_historical_return(prices, compounding=True, frequency=252)
