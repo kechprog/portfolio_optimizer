@@ -3,3 +3,4 @@ allocator/__pycache__
 .venv
 portfolio_app_state.json
 .env
+*.csv

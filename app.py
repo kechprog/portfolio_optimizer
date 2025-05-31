@@ -17,15 +17,8 @@ from allocator.allocator import PortfolioAllocator
 from allocator.manual import ManualAllocator
 from allocator.markovits import MarkovitsAllocator
 
-try:
-    from data_getter import AlphaVantageDataGetter
-    Fetcher = AlphaVantageDataGetter
-except ImportError:
-    print("Attempting to import data_getter from parent directory for development context.")
-    import sys
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-    from data_getter import YahooFinanceDataGetter
-    Fetcher = AlphaVantageDataGetter
+from config import get_fetcher
+Fetcher = get_fetcher()
 
 
 GEAR_ICON = "\u2699"
@@ -420,45 +413,13 @@ class App:
             for ticker, weight in alloc_data['computed_allocations'].items():
                 if abs(weight) > 1e-9: all_instruments_for_plot_data.add(ticker)
         
-        historical_prices_for_plot = pd.DataFrame()
-        problematic_tickers_fetch = set()
-
-        if all_instruments_for_plot_data:
-            print(f"DEBUG: Fetching PLOT data for: {all_instruments_for_plot_data} from {plot_start_dt} to {plot_actual_end_dt}")
-            # Fetch data for the PLOTTING period. Need one day prior for pct_change if plot_start_dt is first day of returns.
-            # Fetch from plot_start_dt - timedelta(days=7) to ensure we get a trading day before plot_start_dt
-            # Then filter the returns from plot_start_dt onwards.
-            fetch_plot_data_start = plot_start_dt - timedelta(days=7) 
-            raw_hist_data = Fetcher.fetch(
-                all_instruments_for_plot_data, fetch_plot_data_start, plot_actual_end_dt, 
-                include_dividends=self.plot_dividends_var.get(), interval="1d"
-            )
-            # ... (data extraction for historical_prices_for_plot same as before, ensure it uses 'Adj Close' or 'Close')
-            if not raw_hist_data.empty:
-                temp_price_frames = []
-                for ticker in all_instruments_for_plot_data:
-                    price_series = None
-                    # Always prefer 'Close' column - data_getter has already adjusted it for dividends if needed
-                    if ('Close', ticker) in raw_hist_data.columns:
-                        price_series = raw_hist_data[('Close', ticker)]
-                    elif 'Close' in raw_hist_data.columns and len(all_instruments_for_plot_data) == 1 and ticker in raw_hist_data.columns.get_level_values(1):
-                        price_series = raw_hist_data['Close'].iloc[:,0]
-                    elif ('Close', ticker.upper()) in raw_hist_data.columns:
-                        price_series = raw_hist_data[('Close', ticker.upper())]
-                    elif 'Close' in raw_hist_data.columns and len(all_instruments_for_plot_data) == 1 and ticker.upper() in raw_hist_data.columns.get_level_values(1):
-                        price_series = raw_hist_data['Close'].iloc[:,0]
-
-                    if price_series is not None and not price_series.isnull().all():
-                        price_series_filled = price_series.ffill().bfill()
-                        if not price_series_filled.isnull().any(): temp_price_frames.append(price_series_filled.rename(ticker))
-                        else: problematic_tickers_fetch.add(ticker)
-                    else: problematic_tickers_fetch.add(ticker)
-                if temp_price_frames:
-                    historical_prices_for_plot = pd.concat(temp_price_frames, axis=1)
-                    # Crucially, ensure prices are available at or before plot_start_dt for pct_change
-                    # The actual returns will start effectively from the day *after* the first date in daily_returns.index
-            else: problematic_tickers_fetch.update(all_instruments_for_plot_data)
-
+        # Extract data fetching to its own method
+        historical_prices_for_plot, problematic_tickers_fetch = self._fetch_plot_data(
+            all_instruments_for_plot_data, 
+            plot_start_dt, 
+            plot_actual_end_dt,
+            self.plot_dividends_var.get()
+        )
 
         if problematic_tickers_fetch:
              messagebox.showwarning("Plot Data Issues", f"Could not fetch/validate plot data for ticker(s):\n{', '.join(sorted(list(problematic_tickers_fetch)))}.", parent=self.root)
@@ -539,6 +500,55 @@ class App:
             if any_allocator_failed_computation: status_msg += " Some allocators failed computation."
             self.set_status(status_msg, success=not (problematic_tickers_fetch or any_allocator_failed_computation), 
                             error=any_allocator_failed_computation)
+
+    def _fetch_plot_data(self, instruments: Set[str], plot_start_dt: date, plot_end_dt: date, include_dividends: bool) -> (pd.DataFrame, Set[str]):
+        """Fetch pricing data for plotting out-of-sample performance"""
+        problematic_tickers = set()
+        prices = pd.DataFrame()
+        
+        if not instruments:
+            return prices, problematic_tickers
+            
+        print(f"DEBUG: Fetching PLOT data for: {instruments} from {plot_start_dt} to {plot_end_dt}")
+        fetch_start = plot_start_dt - timedelta(days=7)  # Get extra days for returns calculation
+        
+        raw_hist_data = Fetcher.fetch(
+            instruments, fetch_start, plot_end_dt, 
+            include_dividends=include_dividends, interval="1d"
+        )
+        
+        if raw_hist_data.empty:
+            problematic_tickers = set(instruments)
+            return prices, problematic_tickers
+
+        temp_price_frames = []
+        # Since tickers are always uppercase, we can simplify column logic
+        for ticker in instruments:
+            # Determine which column to use based on dividend preference
+            field_name = 'AdjClose' if include_dividends else 'Close'
+            # Column in MultiIndex format (field, ticker) - ticker is uppercase
+            target_col = (field_name, ticker)
+            
+            if target_col in raw_hist_data.columns:
+                price_series = raw_hist_data[target_col]
+            # Handle single-instrument case with flat columns (no MultiIndex)
+            elif field_name in raw_hist_data.columns and len(instruments) == 1:
+                price_series = raw_hist_data[field_name]
+            else:
+                problematic_tickers.add(ticker)
+                continue
+                
+            # Process the series
+            price_series_filled = price_series.ffill().bfill()
+            if price_series_filled.isnull().any():
+                problematic_tickers.add(ticker)
+            else:
+                temp_price_frames.append(price_series_filled.rename(ticker))
+
+        if temp_price_frames:
+            prices = pd.concat(temp_price_frames, axis=1)
+            
+        return prices, problematic_tickers
 
     def _save_application_state(self):
         self.set_status("Saving application state...")

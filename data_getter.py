@@ -145,12 +145,16 @@ class AlphaVantageDataGetter(DataGetter):
     
     @classmethod
     def fetch(cls,
-              instruments: Set[str],
+            instruments: Set[str],
               start_date: date,
               end_date: date,
               include_dividends: bool = False,
               interval: str = "1d"
-             ) -> pd.DataFrame:
+            ) -> pd.DataFrame:
+        """
+        include_dividends:
+        - Switches Close to Adjusted Close
+        """
         
         # Currently only daily data is supported for AlphaVantage
         if interval != "1d":
@@ -191,31 +195,19 @@ class AlphaVantageDataGetter(DataGetter):
                         to_wait = 12 - elapsed
                         time.sleep(to_wait)
                 
-                # Actually fetch data
-                if include_dividends:
-                    data, _ = ts.get_daily_adjusted(ticker, outputsize="full")
-                    col_map = {
-                        "1. open": "Open",
-                        "2. high": "High",
-                        "3. low": "Low",
-                        "4. close": "Close",
-                        "5. volume": "Volume",
-                        "7. dividend amount": "Dividends"
-                    }
-                    # For adjusted data, we use the adjusted close price as the close
-                    # The API already incorporates the dividend adjustments into the close price
-                else:
-                    data, _ = ts.get_daily(ticker, outputsize="full")
-                    col_map = {
-                        "1. open": "Open",
-                        "2. high": "High",
-                        "3. low": "Low",
-                        "4. close": "Close",
-                        "5. volume": "Volume"
-                    }
-                    data["Dividends"] = 0.0
+                data, _ = ts.get_daily_adjusted(ticker, outputsize="full")
+                col_map = {
+                    "1. open": "Open",
+                    "2. high": "High",
+                    "3. low": "Low",
+                    "4. close": "Close",
+                    "5. adjusted close": "AdjClose",
+                    "6. volume": "Volume",
+                    "7. dividend amount": "DivedentAmount",
+                    "8. split coefficient": "SplitCoef"
+                }
+
                 
-                # Process data
                 data.rename(columns=col_map, inplace=True)
                 data.index = pd.to_datetime(data.index)
                 data = data[(data.index >= start_ts) & (data.index < end_ts)]
@@ -230,7 +222,6 @@ class AlphaVantageDataGetter(DataGetter):
                     names=["Field", "Ticker"]
                 )
                 
-                # Update last request time under lock protection
                 cls._last_request_time = time.time()
                 return data
                 
@@ -260,107 +251,3 @@ class AlphaVantageDataGetter(DataGetter):
         # Align all data by date index
         combined_data = pd.concat(all_data, axis=1)
         return combined_data.sort_index()
-
-
-def compare_dataframes(yahoo_df: pd.DataFrame, alpha_df: pd.DataFrame, tolerance: float = 0.01) -> None:
-    """
-    Compares two dataframes side by side and reports differences.
-    Input dataframes should both have MultiIndex columns (Field, Ticker).
-    """
-    print("\n" + "="*50)
-    print("DATA COMPARISON REPORT")
-    print("="*50)
-    
-    # Check if either is empty
-    if yahoo_df.empty or alpha_df.empty:
-        print("ERROR: One or both dataframes are empty")
-        print(f"- Yahoo data empty: {yahoo_df.empty}")
-        print(f"- Alpha data empty: {alpha_df.empty}")
-        return
-
-    # Find common dates
-    common_dates = yahoo_df.index.intersection(alpha_df.index)
-    if len(common_dates) == 0:
-        print("WARNING: No common dates between datasets")
-        return
-    
-    print(f"\nComparison period: {common_dates.min().date()} to {common_dates.max().date()}")
-    print(f"- Common dates count: {len(common_dates)}")
-    print(f"- Yahoo-only dates: {len(yahoo_df.index.difference(alpha_df.index))}")
-    print(f"- Alpha-only dates: {len(alpha_df.index.difference(yahoo_df.index))}")
-    
-    # Get unique fields and tickers
-    yahoo_fields = yahoo_df.columns.get_level_values(0).unique()
-    alpha_fields = alpha_df.columns.get_level_values(0).unique()
-    common_fields =  ['Open', 'High', 'Low', 'Close']
-    
-    # Track overall match status
-    all_match = True
-    
-    print("\nFIELD COMPARISON:")
-    for field in sorted(common_fields):
-        field_matches = True
-        
-        print(f"\n{field} Field:")
-        for ticker in test_instruments:
-            alpha_ticker = ticker.upper()  # Alpha returns uppercase
-            
-            try:
-                y_series = yahoo_df[(field, ticker)].loc[common_dates]
-                a_series = alpha_df[(field, alpha_ticker)].loc[common_dates]
-                
-                # Check if series are identical
-                if not y_series.equals(a_series):
-                    field_matches = False
-                    # Calculate metrics
-                    mismatch_count = (abs(y_series - a_series) > tolerance).sum()
-                    avg_diff = (y_series - a_series).mean()
-                    max_diff = (y_series - a_series).abs().max()
-                    
-                    if mismatch_count > 0:
-                        print(f"  {ticker}: ❌ {mismatch_count} mismatches")
-                        print(f"    Avg difference: {avg_diff:.6f}, Max difference: {max_diff:.6f}")
-                    
-                else:
-                    print(f"  {ticker}: ✅ Perfect match")
-                    
-            except KeyError as e:
-                field_matches = False
-                print(f"  {ticker}: ⚠️ Missing data - {e}")
-        
-        if not field_matches:
-            all_match = False
-    
-    # Summary report
-    print("\n" + "="*50)
-    print("SUMMARY COMPARISON RESULT:")
-    if all_match:
-        print("✅ PERFECT MATCH ACROSS ALL FIELDS")
-    else:
-        print("❌ MISMATCHES FOUND IN ONE OR MORE FIELDS")
-    
-    # Instrument availability comparison
-    print("\nINSTRUMENT AVAILABILITY:")
-    yahoo_tickers = yahoo_df.columns.get_level_values(1).unique()
-    alpha_tickers = alpha_df.columns.get_level_values(1).unique()
-    print(f"- Yahoo had {len(yahoo_tickers)} tickers")
-    print(f"- Alpha had {len(alpha_tickers)} tickers")
-    print(f"- Common: {len(set(yahoo_tickers) & set(alpha_tickers))}")
-    print(f"- Yahoo-only: {len(set(yahoo_tickers) - set(alpha_tickers))}")
-    print(f"- Alpha-only: {len(set(alpha_tickers) - set(yahoo_tickers))}")
-
-if __name__ == '__main__':
-    # Test configuration
-    test_instruments = {'F', 'SPY', 'IAU', 'NVDA', 'TLT', 'IEI', 'GM', 'AAPL', 'VGT'}
-    start_date = date(2024, 6, 27)
-    end_date = date(2025, 5, 27)
-    
-    print("\n[1/2] Fetching Yahoo Finance data...")
-    yahoo_data = YahooFinanceDataGetter.fetch(test_instruments, start_date, end_date)
-    
-    print("\n[2/2] Fetching Alpha Vantage data...")
-    alpha_data = AlphaVantageDataGetter.fetch(test_instruments, start_date, end_date)
-    
-    # Run comprehensive comparison
-    print("\n[3/3] Comparing datasets...")
-    compare_dataframes(yahoo_data, alpha_data)

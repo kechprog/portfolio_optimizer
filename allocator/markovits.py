@@ -11,19 +11,8 @@ from tkinter import ttk, simpledialog, messagebox
 import uuid
 
 from .allocator import PortfolioAllocator, PAL
-try:
-    # from ..data_getter import AlphaVantageDataGetter
-    from ..data_getter import YahooFinanceDataGetter
-    Fetcher = YahooFinanceDataGetter
-except ImportError:
-    import sys
-    import os
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
-    # from data_getter import AlphaVantageDataGetter
-    from data_getter import YahooFinanceDataGetter
-    Fetcher = YahooFinanceDataGetter
+from config import get_fetcher
+Fetcher = get_fetcher()
 
 class MarkovitsAllocator(PortfolioAllocator):
     OPTIMIZATION_TARGETS = {
@@ -33,7 +22,7 @@ class MarkovitsAllocator(PortfolioAllocator):
         # Future: "Efficient Risk": "efficient_risk",
     }
     # Default target if not specified or invalid
-    DEFAULT_OPTIMIZATION_TARGET = "max_sharpe"
+    DEFAULT_OPTIMIZATION_TARGET = "min_volatility"
 
 
     def __init__(self, name: str,
