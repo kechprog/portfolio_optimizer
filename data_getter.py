@@ -197,16 +197,17 @@ class AlphaVantageDataGetter(DataGetter):
                 
                 data, _ = ts.get_daily_adjusted(ticker, outputsize="full")
 
-                # TODO: here is the error invistegate it
+                data.columns = map(lambda c: c[3:], data.columns)
+                data.to_csv("test.csv")
                 col_map = {
-                    "1. open": "Open",
-                    "2. high": "High",
-                    "3. low": "Low",
-                    "4. close": "Close",
-                    "5. adjusted close": "AdjClose",
-                    "6. volume": "Volume",
-                    "7. dividend amount": "DivedentAmount",
-                    "8. split coefficient": "SplitCoef"
+                    "open": "Open",
+                    "high": "High",
+                    "low": "Low",
+                    "close": "Close",
+                    "adjusted close": "AdjClose",
+                    "volume": "Volume",
+                    "dividend amount": "DivedentAmount",
+                    "split coefficient": "SplitCoef"
                 }
 
                 

@@ -1,7 +1,7 @@
 # Configuration settings for the portfolio optimizer
 
 # Top-level configuration setting - can be "YahooFinance" or "AlphaVantage"
-DATA_GETTER = "YahooFinance"
+DATA_GETTER = "AlphaVantage"
 
 def get_fetcher():
     """

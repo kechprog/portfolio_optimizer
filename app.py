@@ -30,6 +30,8 @@ class App:
         self.root = root
         self.root.title("Portfolio Allocation Tool")
         self.root.geometry("1200x800")
+        # Bind window close event to save geometry
+        self.root.protocol("WM_DELETE_WINDOW", self._on_window_closing)
 
         self.current_instruments_set: Set[str] = set()
         self.allocators_store: Dict[str, Dict[str, Any]] = {}
@@ -557,7 +559,9 @@ class App:
             "instruments": current_instruments_to_save,
             "fit_start_date": self.fit_start_date_entry.get(),   # Updated key
             "fit_end_date": self.fit_end_date_entry.get(),     # Updated key
-            "allocators": []
+            "allocators": [],
+            "plot_dividends": self.plot_dividends_var.get(),
+            "window_geometry": self.root.geometry()  # Save window geometry
         }
         # ... (rest of save logic using instance.save_state() is same as previous response)
         for aid, data in self.allocators_store.items():
@@ -572,8 +576,6 @@ class App:
                 "id": aid, "type_name": allocator_type_name, "instance_name": instance.name,
                 "is_enabled": data['is_enabled_var'].get(), "config_params": config_params
             })
-        # Add plot dividends state to saved state
-        state["plot_dividends"] = self.plot_dividends_var.get()
         
         try:
             with open(SAVE_STATE_FILENAME, 'w') as f: json.dump(state, f, indent=4)
@@ -590,6 +592,7 @@ class App:
             self.set_status(f"Error loading state file: {e}", error=True); messagebox.showwarning("Load Warning", f"Could not load state: {e}\nStarting fresh.", parent=self.root); return False
 
         try:
+            # Process the entire app state within this try block
             for widget_data in self.instrument_gui_rows: widget_data['frame'].destroy()
             self.instrument_gui_rows.clear(); loaded_instruments_set = set()
             for name in state.get("instruments", []): 
@@ -609,34 +612,58 @@ class App:
             else:
                 self.plot_dividends_var.set(False)
                 self.plot_dividends_checkbox.state(['!selected'])
+                
+            # Restore window geometry if present
+            if "window_geometry" in state:
+                self.root.geometry(state["window_geometry"])
 
             self.allocators_store.clear()
-            # ... (rest of load logic using instance.load_state() is same as previous response)
+            # Load allocators
             for saved_alloc_data in state.get("allocators", []):
                 allocator_type_name = saved_alloc_data["type_name"]
                 AllocatorClass = self.available_allocator_types.get(allocator_type_name)
-                if not AllocatorClass: print(f"Warning: Unknown type '{allocator_type_name}'. Skipping."); continue
+                if not AllocatorClass: 
+                    print(f"Warning: Unknown type '{allocator_type_name}'. Skipping."); continue
                 instance_name = saved_alloc_data["instance_name"]; config_params = saved_alloc_data["config_params"]
                 allocator_id = saved_alloc_data.get("id", str(uuid.uuid4())); new_instance: Optional[PortfolioAllocator] = None
                 try:
-                    if AllocatorClass == MarkovitsAllocator: new_instance = AllocatorClass(name=instance_name, initial_instruments=self.current_instruments_set.copy())
-                    else: new_instance = AllocatorClass(name=instance_name)
+                    if AllocatorClass == MarkovitsAllocator: 
+                        new_instance = AllocatorClass(name=instance_name, initial_instruments=self.current_instruments_set.copy())
+                    else: 
+                        new_instance = AllocatorClass(name=instance_name)
                     new_instance.load_state(config_params, self.current_instruments_set.copy())
-                except Exception as e: print(f"ERROR: Failed to load '{instance_name}': {e}"); self.set_status(f"Error loading {instance_name}: {e}", error=True); continue
-                if new_instance: self.allocators_store[allocator_id] = {'instance': new_instance, 'is_enabled_var': tk.BooleanVar(value=saved_alloc_data.get("is_enabled", True))}
-                else: print(f"Warning: Could not recreate '{instance_name}'.")
+                except Exception as e: 
+                    print(f"ERROR: Failed to load '{instance_name}': {e}"); 
+                    self.set_status(f"Error loading {instance_name}: {e}", error=True); 
+                    continue
+                if new_instance: 
+                    self.allocators_store[allocator_id] = {
+                        'instance': new_instance, 
+                        'is_enabled_var': tk.BooleanVar(value=saved_alloc_data.get("is_enabled", True))
+                    }
+                else: 
+                    print(f"Warning: Could not recreate '{instance_name}'.")
             
-            self._redraw_allocator_list_ui(); self._refresh_allocations_display_area()
+            self._redraw_allocator_list_ui(); 
+            self._refresh_allocations_display_area()
             self._set_initial_plot_view_limits() # Uses fit_end_date_entry
             self.canvas.draw()
             self._on_global_update_button_click(is_auto_load_call=True) # Plot after load
+            
             return True
-        except Exception as e: # ... (same fallback as before)
-            self.set_status(f"Critical error processing loaded state: {e}", error=True); import traceback; traceback.print_exc()
+            
+        except Exception as e:
+            self.set_status(f"Critical error processing loaded state: {e}", error=True); 
+            import traceback
+            traceback.print_exc()
             messagebox.showerror("Load Error", f"Critical error processing state: {e}\nStarting fresh.", parent=self.root)
             self.current_instruments_set = set(); 
-            for rd in self.instrument_gui_rows: rd['frame'].destroy()
-            self.instrument_gui_rows.clear(); self.allocators_store.clear(); self._add_instrument_row_ui(); self._redraw_allocator_list_ui()
+            for rd in self.instrument_gui_rows: 
+                rd['frame'].destroy()
+            self.instrument_gui_rows.clear()
+            self.allocators_store.clear()
+            self._add_instrument_row_ui()
+            self._redraw_allocator_list_ui()
             return False
 
     def _update_allocator_selector_dropdown(self):
@@ -712,6 +739,26 @@ class App:
         if error: self.status_bar.config(foreground="white", background="#A62F03")
         elif success: self.status_bar.config(foreground="white", background="#027A48")
         else: self.status_bar.config(foreground="black", background=ttk.Style().lookup('TLabel', 'background'))
+
+    def _on_window_closing(self):
+        """Save window geometry when the app is closed (preserves existing state)"""
+        try:
+            # Load existing state if available
+            existing_state = {}
+            if os.path.exists(SAVE_STATE_FILENAME):
+                with open(SAVE_STATE_FILENAME, 'r') as f:
+                    existing_state = json.load(f)
+            
+            # Update ONLY the window geometry in the state
+            existing_state["window_geometry"] = self.root.geometry()
+            
+            # Save the updated state
+            with open(SAVE_STATE_FILENAME, 'w') as f:
+                json.dump(existing_state, f, indent=4)
+        except Exception as e:
+            print(f"Error saving window geometry on close: {e}")
+        finally:
+            self.root.destroy()
 
 if __name__ == "__main__":
     root = tk.Tk()
