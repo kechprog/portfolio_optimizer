@@ -4,3 +4,7 @@ allocator/__pycache__
 portfolio_app_state.json
 .env
 *.csv
+app_icon.ico
+build_temp
+dist
+PortfolioOptimizer.spec

@@ -6,3 +6,5 @@ numpy
 pyportfolioopt
 scikit-learn
 alpha-vantage
+pillow
+pyinstaller

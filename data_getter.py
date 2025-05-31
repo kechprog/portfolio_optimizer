@@ -198,7 +198,6 @@ class AlphaVantageDataGetter(DataGetter):
                 data, _ = ts.get_daily_adjusted(ticker, outputsize="full")
 
                 data.columns = map(lambda c: c[3:], data.columns)
-                data.to_csv("test.csv")
                 col_map = {
                     "open": "Open",
                     "high": "High",
@@ -254,3 +253,81 @@ class AlphaVantageDataGetter(DataGetter):
         # Align all data by date index
         combined_data = pd.concat(all_data, axis=1)
         return combined_data.sort_index()
+
+
+from typing import Callable, Tuple, Set, List
+import logging
+# TODO: add other fetchers?
+def _create_fetcher() -> Callable[[Set[str], pd.Timestamp, pd.Timestamp], Tuple[pd.DataFrame, List[str]]]:
+    load_dotenv()
+
+    cache: Dict[str, pd.DataFrame] = {}
+    key = os.getenv("ALPHA_KEY")
+
+    col_map = {
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "adjusted close": "AdjClose",
+        "volume": "Volume",
+        "dividend amount": "DivedentAmount",
+        "split coefficient": "SplitCoef"
+    }
+
+    def _inner(instruments: Set[str], start: pd.Timestamp, end: pd.Timestamp) -> Tuple[pd.DataFrame, List[str]]:
+        flawed = []
+        ok = []
+        for i in instruments:
+            f: pd.DataFrame
+            if i in cache and start in cache[i].index and end in cache[i].index:
+                logging.info(f"Got cache hit on: `{i}`")
+                f = cache[i]
+            else:
+                logging.info(f"didn't get a cache hit on: `{i}`")
+                t = TimeSeries(key, output_format="pandas")
+
+                try:
+                    f, _ = t.get_daily_adjusted(   # type: ignore
+                        i, outputsize="full")
+                except Exception as e:
+                    flawed.append(i)
+                    continue
+
+                f.columns = list(map(lambda c: col_map[c[3:]], f.columns))
+                f.index = pd.to_datetime(f.index)
+
+                cache[i] = f
+
+            # TODO: add verification for time frame correctness
+            f = f[(start <= f.index) & (f.index <= end)]
+            f.columns = pd.MultiIndex.from_product(
+                [f.columns, [i.upper()]],
+                names=["Field", "Ticker"]
+            )
+            ok.append(f)
+
+        return (
+            pd.concat(ok, axis=1).sort_index(),
+            flawed
+        )
+
+    return _inner
+
+
+av_fetcher = _create_fetcher()
+
+if __name__ == "__main__":
+    from datetime import timedelta
+    inst = {"AAPL"}
+    start = date.today() - timedelta(weeks = 10)
+    end = date.today()
+
+
+    old = AlphaVantageDataGetter.fetch(
+        inst, start, end
+    )
+    old.to_csv("old.csv")
+
+    new, _ = av_fetcher(inst, pd.to_datetime(start), pd.to_datetime(end))
+    new.to_csv("new.csv")
