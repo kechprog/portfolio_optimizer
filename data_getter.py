@@ -196,6 +196,8 @@ class AlphaVantageDataGetter(DataGetter):
                         time.sleep(to_wait)
                 
                 data, _ = ts.get_daily_adjusted(ticker, outputsize="full")
+
+                # TODO: here is the error invistegate it
                 col_map = {
                     "1. open": "Open",
                     "2. high": "High",
