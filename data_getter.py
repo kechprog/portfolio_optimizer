@@ -138,124 +138,8 @@ class YahooFinanceDataGetter(DataGetter):
         return filtered_data.sort_index()
 
 
-class AlphaVantageDataGetter(DataGetter):
-    """Alpha Vantage data getter without caching with concurrent fetching"""
-    
-    _last_request_time = None  # Simple rate limiting
-    
-    @classmethod
-    def fetch(cls,
-            instruments: Set[str],
-              start_date: date,
-              end_date: date,
-              include_dividends: bool = False,
-              interval: str = "1d"
-            ) -> pd.DataFrame:
-        """
-        include_dividends:
-        - Switches Close to Adjusted Close
-        """
-        
-        # Currently only daily data is supported for AlphaVantage
-        if interval != "1d":
-            print(f"ERROR: AlphaVantage currently only supports daily data (interval='1d'). "
-                  f"Using '1d' instead of {interval}.")
-            exit(1)
-            interval = "1d"
-        
-        if not instruments:
-            print("INFO: No instruments provided to fetch. Returning empty DataFrame.")
-            return pd.DataFrame()
-        
-        print(f"INFO: Fetching {len(instruments)} instruments with Alpha Vantage "
-              f"({start_date} to {end_date}, dividends: {include_dividends})")
-        
-        # API key setup
-        load_dotenv()
-        api_key = os.getenv("ALPHA_KEY")
-        if not api_key:
-            print("ERROR: ALPHA_KEY environment variable not set")
-            return pd.DataFrame()
-        
-        ts = TimeSeries(api_key, output_format='pandas')
-        start_ts = pd.Timestamp(start_date)
-        end_ts = pd.Timestamp(end_date) + pd.Timedelta(days=1)
-        all_data = []
-        
-        # Use concurrency for reduced request time
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        
-        def fetch_instrument(ticker):
-            try:
-                # Rate limiting: one mutex for all threads
-                current_time = time.time()
-                if cls._last_request_time:
-                    elapsed = current_time - cls._last_request_time
-                    if elapsed < 12:  # 5 requests/min = 12 sec/request
-                        to_wait = 12 - elapsed
-                        time.sleep(to_wait)
-                
-                data, _ = ts.get_daily_adjusted(ticker, outputsize="full")
 
-                data.columns = map(lambda c: c[3:], data.columns)
-                col_map = {
-                    "open": "Open",
-                    "high": "High",
-                    "low": "Low",
-                    "close": "Close",
-                    "adjusted close": "AdjClose",
-                    "volume": "Volume",
-                    "dividend amount": "DivedentAmount",
-                    "split coefficient": "SplitCoef"
-                }
-
-                
-                data.rename(columns=col_map, inplace=True)
-                data.index = pd.to_datetime(data.index)
-                data = data[(data.index >= start_ts) & (data.index < end_ts)]
-                
-                if data.empty:
-                    print(f"  WARNING: No data for {ticker} in date range")
-                    return None
-                
-                # Convert to MultiIndex
-                data.columns = pd.MultiIndex.from_product(
-                    [data.columns, [ticker.upper()]],
-                    names=["Field", "Ticker"]
-                )
-                
-                cls._last_request_time = time.time()
-                return data
-                
-            except Exception as e:
-                print(f"  ERROR fetching {ticker}: {str(e)}")
-                return None
-        
-        # Create thread pool
-        with ThreadPoolExecutor(max_workers=15) as executor:
-            # Don't use >1 worker as Alpha Vantage free key has strict rate limiting
-            futures = {executor.submit(fetch_instrument, ticker): ticker 
-                       for ticker in sorted(instruments)}
-            
-            for i, future in enumerate(as_completed(futures), 1):
-                ticker = futures[future]
-                print(f"  [{i}/{len(instruments)}] Completed {ticker}")
-                result = future.result()
-                if result is not None:
-                    all_data.append(result)
-        
-        # Combine all instruments
-        if not all_data:
-            return pd.DataFrame()
-        elif len(all_data) == 1:
-            return all_data[0]
-        
-        # Align all data by date index
-        combined_data = pd.concat(all_data, axis=1)
-        return combined_data.sort_index()
-
-
-from typing import Callable, Tuple, Set, List
+from typing import Callable, Tuple, Set, List, Dict
 import logging
 # TODO: add other fetchers?
 def _create_fetcher() -> Callable[[Set[str], pd.Timestamp, pd.Timestamp], Tuple[pd.DataFrame, List[str]]]:
@@ -317,17 +201,14 @@ def _create_fetcher() -> Callable[[Set[str], pd.Timestamp, pd.Timestamp], Tuple[
 
 av_fetcher = _create_fetcher()
 
-if __name__ == "__main__":
-    from datetime import timedelta
-    inst = {"AAPL"}
-    start = date.today() - timedelta(weeks = 10)
-    end = date.today()
 
-
-    old = AlphaVantageDataGetter.fetch(
-        inst, start, end
-    )
-    old.to_csv("old.csv")
-
-    new, _ = av_fetcher(inst, pd.to_datetime(start), pd.to_datetime(end))
-    new.to_csv("new.csv")
+class AlphaVantageDataGetter(DataGetter):
+    @classmethod
+    def fetch(cls,
+            instruments: Set[str],
+              start_date: date,
+              end_date: date,
+              include_dividends: bool = False,
+              interval: str = "1d"
+            ) -> pd.DataFrame:
+        return av_fetcher(instruments, pd.to_datetime(start_date), pd.to_datetime(end_date))[0]
