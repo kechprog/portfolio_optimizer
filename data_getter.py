@@ -288,5 +288,5 @@ class AlphaVantageDataGetter(DataGetter):
               end_date: date,
               include_dividends: bool = False,
               interval: str = "1d"
-            ) -> pd.DataFrame:
-        return cls.av_fetcher(instruments, pd.to_datetime(start_date), pd.to_datetime(end_date))[0]
+            ) -> Tuple[pd.DataFrame, List[str]]:
+        return cls.av_fetcher(instruments, pd.to_datetime(start_date), pd.to_datetime(end_date))

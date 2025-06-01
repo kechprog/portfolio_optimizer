@@ -50,105 +50,119 @@ class MarkovitsAllocator(PortfolioAllocator):
 
 
     def compute_allocations(self, fitting_start_date: date, fitting_end_date: date) -> Dict[str, float]:
+        # Initialize allocations to zero for all requested instruments
+        self._allocations = {instrument: 0.0 for instrument in self._instruments}
+
         if not self._instruments:
             print(f"WARNING ({self.name}): No instruments supplied. Cannot compute allocations.")
-            self._allocations = {}
-            return {}
+            return self._allocations.copy()
 
         print(f"INFO ({self.name}): Computing allocations for {self._instruments} from {fitting_start_date} to {fitting_end_date}.")
-        price_data_type = 'Adj Close' # Adjusted Close is generally preferred
         
+        # Fetcher now returns (DataFrame, Set[str] of flawed tickers)
+        # The fetcher handles normalization of tickers for API calls (e.g., to uppercase for AV)
+        # We expect the 'Ticker' level in the returned MultiIndex to match the case of our internal self._instruments
+        # if the fetcher is designed to map back. Let's assume for now fetcher returns Tickers in the casing it received them
+        # or we use a mapping if Fetcher standardizes output Ticker casing (e.g. always uppercase).
+        # Given _create_fetcher returns uppercase tickers in MultiIndex, adapt here.
+        
+        requested_instruments_upper = {t.upper() for t in self._instruments}
+        # Keep a mapping from the upper-cased version back to the original for final allocations
+        # This is important if self._instruments can have mixed casing.
+        upper_to_original_ticker_map = {t.upper(): t for t in self._instruments}
+
         try:
-            raw_data = Fetcher.fetch(
-                # Normalize to uppercase for Alpha Vantage compatibility
-                {t.upper() for t in self._instruments},
+            raw_data_df, flawed_tickers_from_fetcher_upper = Fetcher.fetch(
+                requested_instruments_upper, # Pass uppercase set to fetcher
                 fitting_start_date,
                 fitting_end_date,
-                interval="1d"
+                interval="1d",
+                include_dividends=True # Markovits typically uses adjusted prices
             )
-        except Exception as e:
-            print(f"ERROR ({self.name}): Data fetching failed: {e}")
-            self._allocations = {}
-            return {}
+        except Exception as e: # Catch broad exceptions from fetcher call itself
+            print(f"ERROR ({self.name}): Data fetching call failed: {e}")
+            return self._allocations.copy() # Returns all zeros
 
-        if raw_data.empty:
-            print(f"WARNING ({self.name}): No data from fetcher.")
-            self._allocations = {}
-            return {}
-            
-        # Create mapping for normalized ticker (uppercase) to original ticker
-        ticker_mapping = {t.upper(): t for t in self._instruments}
+        if raw_data_df.empty:
+            print(f"WARNING ({self.name}): No data returned from fetcher. All instruments ({self._instruments}) might be flawed.")
+            # All allocations remain 0.0
+            return self._allocations.copy()
+
+        # Determine valid instruments for optimization based on fetcher's feedback
+        # Flawed tickers from fetcher are uppercase. Ensure it's a set for the difference operation.
+        valid_instruments_upper = requested_instruments_upper - set(flawed_tickers_from_fetcher_upper)
         
+        if not valid_instruments_upper:
+            print(f"WARNING ({self.name}): No valid instruments after fetcher processing. Flawed: {flawed_tickers_from_fetcher_upper}")
+            return self._allocations.copy() # All allocations remain 0.0
+
         prices_df_list = []
-        valid_instruments_for_alloc = set()
-        available_fields = raw_data.columns.get_level_values(0)
         
-        for ticker_upper in [t.upper() for t in self._instruments]:
-            original_ticker = ticker_mapping.get(ticker_upper)
+        # The fetcher should ideally return 'AdjClose' if include_dividends was True and successful,
+        # otherwise 'Close'. We check for 'AdjClose' first.
+        # The Ticker level in raw_data_df.columns should be uppercase based on _create_fetcher.
+        preferred_field = 'AdjClose'
+        fallback_field = 'Close'
+
+        for ticker_upper in valid_instruments_upper:
+            original_ticker = upper_to_original_ticker_map[ticker_upper] # Get original case for series name
+            price_series: Optional[pd.Series] = None
             
-            # Prioritize 'Adj Close' but fall back to 'Close' if needed
-            if (price_data_type, ticker_upper) in raw_data.columns:
-                price_series = raw_data[(price_data_type, ticker_upper)]
-            elif ('Close', ticker_upper) in raw_data.columns:
-                price_data_type = 'Close'
-                price_series = raw_data[('Close', ticker_upper)]
-                print(f"INFO ({self.name}): Using 'Close' data for {original_ticker}")
+            if (preferred_field, ticker_upper) in raw_data_df.columns:
+                price_series = raw_data_df[(preferred_field, ticker_upper)]
+                # print(f"INFO ({self.name}): Using '{preferred_field}' data for {original_ticker} ({ticker_upper})")
+            elif (fallback_field, ticker_upper) in raw_data_df.columns:
+                price_series = raw_data_df[(fallback_field, ticker_upper)]
+                print(f"INFO ({self.name}): Using '{fallback_field}' data for {original_ticker} ({ticker_upper}) as '{preferred_field}' not found.")
             else:
-                print(f"WARNING ({self.name}): Price data for {original_ticker} not found. Columns: {[col for col in raw_data.columns if col[1] == ticker_upper]}")
+                print(f"WARNING ({self.name}): Price data for {original_ticker} ({ticker_upper}) not found in fetched data columns. Skipping.")
+                # This ticker, though not in flawed_tickers_from_fetcher, doesn't have expected data columns.
+                # It will be excluded from optimization. Allocations will remain 0.
                 continue
 
-            # Handle NaN values
-            ticker_prices = price_series.dropna().copy()
-            
-            if not ticker_prices.empty:
-                prices_df_list.append(ticker_prices.rename(original_ticker))
-                valid_instruments_for_alloc.add(original_ticker)
+            if price_series is not None and not price_series.dropna().empty:
+                prices_df_list.append(price_series.dropna().rename(original_ticker))
             else:
-                print(f"WARNING ({self.name}): All price data for {original_ticker} was NaN.")
+                print(f"WARNING ({self.name}): All price data for {original_ticker} ({ticker_upper}) was NaN or series was None. Skipping.")
+                # This ticker will be excluded. Allocations will remain 0.
         
         if not prices_df_list:
-            print(f"WARNING ({self.name}): No valid price data for any instrument. Cannot compute.")
-            self._allocations = {inst:0.0 for inst in self._instruments}
-            return self._allocations.copy()
+            print(f"WARNING ({self.name}): No valid price series found for any of the instruments post-extraction. Cannot compute.")
+            return self._allocations.copy() # All allocations remain 0.0
             
-        # Ensure proper alignment and fill missing values
-        prices = pd.concat(prices_df_list, axis=1)
-        # Use first valid index date across all series
-        all_start = max([s.first_valid_index() for s in prices_df_list])
-        all_end = min([s.last_valid_index() for s in prices_df_list])
-        prices = prices.loc[all_start:all_end].sort_index()
+        prices = pd.concat(prices_df_list, axis=1).sort_index()
         
-        # Forward fill then backfill
-        prices = prices.ffill().bfill()
+        # Date alignment: find common date range after individual series processing
+        if prices.shape[0] > 1 and prices.shape[1] > 0:
+            # Ensure all series start and end on common ground for reliable cov matrix
+            common_start = prices.apply(lambda col: col.first_valid_index()).max()
+            common_end = prices.apply(lambda col: col.last_valid_index()).min()
+            if pd.notna(common_start) and pd.notna(common_end) and common_start < common_end:
+                prices = prices.loc[common_start:common_end]
+            else:
+                print(f"WARNING ({self.name}): Could not determine common date range. Start: {common_start}, End: {common_end}. Using available data.")
+        
+        prices = prices.ffill().bfill() # Fill any gaps
+        prices.dropna(axis=1, how='all', inplace=True) # Drop columns that are still all NaN
 
-        # Check data integrity
-        if prices.shape[0] < 2:
-            print(f"WARNING ({self.name}): Not enough historical data points ({prices.shape[0]}) after processing.")
-            self._allocations = {t:0.0 for t in self._instruments}
+        if prices.empty or prices.shape[0] < 2 or prices.shape[1] == 0 :
+            print(f"WARNING ({self.name}): Not enough historical data points or instruments ({prices.shape}) after processing. Cannot compute.")
             return self._allocations.copy()
-            
-        # Verify no empty columns
-        empty_cols = prices.columns[prices.isnull().all()]
-        if any(empty_cols):
-            print(f"WARNING ({self.name}): Columns with all NaN values: {list(empty_cols)}")
-            prices = prices.drop(columns=empty_cols)
-            # Update valid instruments by removing those with empty data
-            valid_instruments_for_alloc -= set(empty_cols)
-            
-        if prices.empty or prices.shape[1] == 0:
-             print(f"WARNING ({self.name}): Price data became empty after NaN handling. Columns: {prices.columns}")
-             self._allocations = {inst:0.0 for inst in self._instruments}
-             return self._allocations.copy()
 
+        # Check for instruments that were intended for optimization but got dropped (e.g. all NaN)
+        final_instruments_for_opt = set(prices.columns) # These are original cased tickers
+        
+        # At this point, `prices` DataFrame has original-cased tickers as columns
         try:
             mu = expected_returns.mean_historical_return(prices, compounding=True, frequency=252)
             S = risk_models.CovarianceShrinkage(prices, frequency=252).ledoit_wolf()
         except Exception as e:
             print(f"ERROR ({self.name}): Could not calculate mu/S: {e}. Prices shape: {prices.shape}, Columns: {prices.columns}")
-            self._allocations = {inst:0.0 for inst in self._instruments}
             return self._allocations.copy()
 
         weight_bounds = (-1.0 if self._allow_shorting else 0.0, 1.0)
+        
+        # mu and S are indexed by original_ticker names
         ef = EfficientFrontier(mu, S, weight_bounds=weight_bounds)
 
         try:
@@ -156,29 +170,28 @@ class MarkovitsAllocator(PortfolioAllocator):
                 ef.max_sharpe()
             elif self.optimization_target == "min_volatility":
                 ef.min_volatility()
-            else: # Fallback
+            else: 
                 print(f"WARNING ({self.name}): Unknown optimization target '{self.optimization_target}'. Defaulting to max_sharpe.")
                 ef.max_sharpe()
             
-            cleaned_weights = ef.clean_weights()
-            # Initialize allocations for all instruments that were part of the optimization attempt
-            temp_allocations = {instrument: 0.0 for instrument in valid_instruments_for_alloc}
-            temp_allocations.update(dict(cleaned_weights)) # Update with computed weights
+            cleaned_weights = ef.clean_weights() # These weights are for original_ticker names
             
-            # Now, ensure self._allocations reflects all original self._instruments,
-            # setting 0 for those not in temp_allocations (e.g. if dropped during price processing)
-            self._allocations = {instrument: temp_allocations.get(instrument, 0.0) for instrument in self._instruments}
+            # Update the self._allocations (initialized to all zeros) with the computed weights
+            for ticker, weight in cleaned_weights.items():
+                if ticker in self._allocations: # Should always be true if ticker was in final_instruments_for_opt
+                    self._allocations[ticker] = weight
+                else: # Should not happen if logic is correct
+                    print(f"WARNING ({self.name}): Ticker {ticker} from optimization not in original instrument list. This is unexpected.")
 
             print(f"INFO ({self.name}): Computed allocations: {self._allocations}")
             return self._allocations.copy()
 
-        except ValueError as ve:
+        except ValueError as ve: # Often from pypfopt if optimization is impossible
              print(f"ERROR ({self.name}): Optimization failed for '{self.optimization_target}': {ve}")
-             self._allocations = {inst: 0.0 for inst in self._instruments}
+             # self._allocations already reflects zeros for uncomputed instruments
              return self._allocations.copy()
         except Exception as e:
             print(f"ERROR ({self.name}): Unexpected error during optimization: {e}")
-            self._allocations = {inst: 0.0 for inst in self._instruments}
             return self._allocations.copy()
 
     @classmethod
