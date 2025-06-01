@@ -401,7 +401,8 @@ class App:
                     enabled_allocators_data.append({'instance': allocator, 'computed_allocations': computed_allocs})
                 except Exception as e:
                     msg = f"Error computing allocations for {allocator.name}: {e}"; print(msg)
-                    self.set_status(msg, error=True); any_allocator_failed_computation = True
+                    self.set_status(msg, error=True);
+                    any_allocator_failed_computation = True
         
         if not enabled_allocators_data and not any_allocator_failed_computation:
              self.set_status("No allocators enabled or no allocations computed. Nothing to plot.", error=not is_auto_load_call) # ... (same as before)
@@ -506,51 +507,82 @@ class App:
     def _fetch_plot_data(self, instruments: Set[str], plot_start_dt: date, plot_end_dt: date, include_dividends: bool) -> (pd.DataFrame, Set[str]):
         """Fetch pricing data for plotting out-of-sample performance"""
         problematic_tickers = set()
-        prices = pd.DataFrame()
-        
+        final_prices_df = pd.DataFrame()
+
         if not instruments:
-            return prices, problematic_tickers
-            
+            return final_prices_df, problematic_tickers
+
         print(f"DEBUG: Fetching PLOT data for: {instruments} from {plot_start_dt} to {plot_end_dt}")
         fetch_start = plot_start_dt - timedelta(days=7)  # Get extra days for returns calculation
-        
+
         raw_hist_data = Fetcher.fetch(
-            instruments, fetch_start, plot_end_dt, 
-            include_dividends=include_dividends, interval="1d"
+            list(instruments), # Fetcher API might prefer a list
+            fetch_start, 
+            plot_end_dt,
+            include_dividends=include_dividends, 
+            interval="1d"
         )
-        
+
         if raw_hist_data.empty:
-            problematic_tickers = set(instruments)
-            return prices, problematic_tickers
+            problematic_tickers.update(instruments)
+            return final_prices_df, problematic_tickers
 
-        temp_price_frames = []
-        # Since tickers are always uppercase, we can simplify column logic
-        for ticker in instruments:
-            # Determine which column to use based on dividend preference
-            field_name = 'AdjClose' if include_dividends else 'Close'
-            # Column in MultiIndex format (field, ticker) - ticker is uppercase
-            target_col = (field_name, ticker)
-            
-            if target_col in raw_hist_data.columns:
-                price_series = raw_hist_data[target_col]
-            # Handle single-instrument case with flat columns (no MultiIndex)
-            elif field_name in raw_hist_data.columns and len(instruments) == 1:
-                price_series = raw_hist_data[field_name]
-            else:
-                problematic_tickers.add(ticker)
-                continue
-                
-            # Process the series
-            price_series_filled = price_series.ffill().bfill()
-            if price_series_filled.isnull().any():
-                problematic_tickers.add(ticker)
-            else:
-                temp_price_frames.append(price_series_filled.rename(ticker))
+        field_name = 'AdjClose' if include_dividends else 'Close'
+        temp_series_to_concat: List[pd.Series] = []
 
-        if temp_price_frames:
-            prices = pd.concat(temp_price_frames, axis=1)
+        for ticker in instruments:  # instruments set contains uppercase tickers
+            price_series_for_ticker: Optional[pd.Series] = None
+
+            # Case 1: raw_hist_data has MultiIndex columns (e.g., ('AdjClose', 'AAPL'))
+            if isinstance(raw_hist_data.columns, pd.MultiIndex):
+                target_col_tuple = (field_name, ticker) # ticker is already uppercase
+                if target_col_tuple in raw_hist_data.columns:
+                    price_series_for_ticker = raw_hist_data[target_col_tuple]
+            # Case 2: raw_hist_data has flat columns.
+            # This typically occurs if only one instrument was requested in total for this fetch,
+            # and the Fetcher returned a DataFrame with simple column names (e.g., 'Close').
+            elif not isinstance(raw_hist_data.columns, pd.MultiIndex) and \
+                 field_name in raw_hist_data.columns and \
+                 len(instruments) == 1: # This condition implies this loop runs for the single instrument
+                    price_series_for_ticker = raw_hist_data[field_name]
+
+            if price_series_for_ticker is not None:
+                # Rename the series to the ticker name before appending.
+                # This ensures that when pd.concat is called, the resulting DataFrame
+                # has columns named after the tickers.
+                temp_series_to_concat.append(price_series_for_ticker.rename(ticker))
+            else:
+                # If price_series_for_ticker is still None, it means the data for this ticker
+                # was not found in the expected formats in raw_hist_data.
+                problematic_tickers.add(ticker)
+
+        if not temp_series_to_concat:
+            # All tickers might have been problematic or raw_hist_data had an unexpected structure.
+            return final_prices_df, problematic_tickers # problematic_tickers has been updated
+
+        # Concatenate all collected series at once.
+        # This creates a DataFrame where each column is a ticker's price series.
+        intermediate_prices_df = pd.concat(temp_series_to_concat, axis=1)
+        
+        # Perform fill operations in a vectorized manner on the entire DataFrame.
+        filled_prices_df = intermediate_prices_df.ffill().bfill()
+        
+        # Identify columns (tickers) that still contain any NaN values after ffill/bfill.
+        # These are considered problematic.
+        nan_columns_mask = filled_prices_df.isnull().any()
+        tickers_with_nans = filled_prices_df.columns[nan_columns_mask].tolist()
+        problematic_tickers.update(tickers_with_nans)
+        
+        # Select only the columns (tickers) that are not problematic.
+        final_good_tickers = [t for t in filled_prices_df.columns if t not in problematic_tickers]
+        
+        if final_good_tickers:
+            final_prices_df = filled_prices_df[final_good_tickers]
+            # As an additional safeguard, remove any columns that might be all NaNs,
+            # though theoretically, final_good_tickers should not contain such columns.
+            final_prices_df.dropna(axis=1, how='all', inplace=True)
             
-        return prices, problematic_tickers
+        return final_prices_df, problematic_tickers
 
     def _save_application_state(self):
         self.set_status("Saving application state...")
