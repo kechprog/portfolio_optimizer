@@ -45,7 +45,9 @@ class App:
         
         self.available_allocator_types: Dict[str, Type[PortfolioAllocator]] = {
             "Manual Allocator": ManualAllocator,
-            "Markovits Allocator": MarkovitsAllocator,
+            # "Markovits Allocator": MarkovitsAllocator, # REMOVED
+            "MPT Max Sharpe": MaxSharpeAllocator,
+            "MPT Min Volatility": MinVolatilityAllocator,
         }
         self._plot_data_cache: Optional[pd.DataFrame] = None # Retained for potential future use
         self._plot_data_cache_params: Optional[Dict[str, Any]] = None # Retained
@@ -394,7 +396,7 @@ class App:
                         # 'computed_portfolio': computed_portfolio # Could also store this if needed later here
                     })
                 except Exception as e:
-                    msg = f"Error computing allocations for {allocator.get_name()}: {e}"; logger.error(msg)
+                    msg = f"Error computing allocations for {allocator.get_name()}: {e}"; logger.error(msg, exc_info=True)
                     self.set_status(msg, error=True);
                     any_allocator_failed_computation = True
         
