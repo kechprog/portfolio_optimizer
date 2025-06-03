@@ -1,4 +1,4 @@
-# app.py
+# c:\Users\Eduar\projects\portfolio_optimizer\app.py
 import multiprocessing # Added for freeze_support
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -8,13 +8,14 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.dates as mdates
 import matplotlib.ticker as mtick # For PercentFormatter
 import pandas as pd
-import numpy as np
+# import numpy as np # Not explicitly used after refactoring, could be removed if not needed by other parts
 import uuid
 import json
 import os
 from typing import Optional, Set, Dict, Type, Any, List, Tuple
 
-from allocator.allocator import PortfolioAllocator
+# Import the new AllocatorState along with PortfolioAllocator
+from allocator.allocator import PortfolioAllocator, AllocatorState
 from allocator.manual import ManualAllocator
 from allocator.markovits import MarkovitsAllocator
 
@@ -31,28 +32,31 @@ class App:
         self.root = root
         self.root.title("Portfolio Allocation Tool")
         self.root.geometry("1200x800")
-        # Bind window close event to save geometry
         self.root.protocol("WM_DELETE_WINDOW", self._on_window_closing)
 
-        self.current_instruments_set: Set[str] = set()
+        # self.current_instruments_set: Set[str] = set() # REMOVED - managed per allocator
+
+        # Stores allocator instances and their UI elements (like is_enabled_var)
+        # Key: allocator_id (str), Value: Dict {'instance': PortfolioAllocator, 'is_enabled_var': tk.BooleanVar}
         self.allocators_store: Dict[str, Dict[str, Any]] = {}
+        
         self.available_allocator_types: Dict[str, Type[PortfolioAllocator]] = {
             "Manual Allocator": ManualAllocator,
             "Markovits Allocator": MarkovitsAllocator,
         }
-        self._plot_data_cache: Optional[pd.DataFrame] = None
-        self._plot_data_cache_params: Optional[Dict[str, Any]] = None
+        self._plot_data_cache: Optional[pd.DataFrame] = None # Retained for potential future use
+        self._plot_data_cache_params: Optional[Dict[str, Any]] = None # Retained
 
         self._create_widgets()
 
         if not self._load_application_state():
-            self._add_instrument_row_ui()
+            # No global instruments to add initially.
             self._update_allocator_selector_dropdown()
             self._refresh_allocations_display_area()
             self.set_status("Welcome! Started fresh.")
         else:
             self.set_status("Application state loaded successfully.", success=True)
-            # self._on_global_update_button_click(is_auto_load_call=True) # Plot on load
+            # Plotting on load is handled within _load_application_state if allocators exist
 
     def _create_widgets(self):
         main_v_pane = ttk.PanedWindow(self.root, orient=tk.VERTICAL)
@@ -63,7 +67,7 @@ class App:
         top_h_pane = ttk.PanedWindow(top_frame_outer, orient=tk.HORIZONTAL)
         top_h_pane.pack(fill=tk.BOTH, expand=True)
 
-        self.plot_frame_tl = ttk.LabelFrame(top_h_pane, text="Portfolio Performance (Out-of-Sample)", padding=5) # Updated title
+        self.plot_frame_tl = ttk.LabelFrame(top_h_pane, text="Portfolio Performance (Out-of-Sample)", padding=5)
         top_h_pane.add(self.plot_frame_tl, weight=3)
         self.fig = Figure(figsize=(8, 6), dpi=100)
         self.ax = self.fig.add_subplot(111)
@@ -76,12 +80,11 @@ class App:
 
         action_button_bar = ttk.Frame(self.top_right_controls_frame)
         action_button_bar.pack(pady=(0,10), fill="x")
-        self.global_update_button = ttk.Button(action_button_bar, text="FIT & PLOT", command=self._on_global_update_button_click, style="Accent.TButton") # Renamed button
+        self.global_update_button = ttk.Button(action_button_bar, text="FIT & PLOT", command=self._on_global_update_button_click, style="Accent.TButton")
         self.global_update_button.pack(side="left", fill="x", expand=True, ipady=5, padx=(0,2))
         self.save_state_button = ttk.Button(action_button_bar, text="SAVE STATE", command=self._save_application_state, style="Info.TButton")
         self.save_state_button.pack(side="left", fill="x", expand=True, ipady=5, padx=(2,0))
         
-        # Add checkbox for plotting with dividends
         self.plot_dividends_var = tk.BooleanVar(value=False)
         self.plot_dividends_checkbox = ttk.Checkbutton(self.top_right_controls_frame, 
                                                     text="Plot with Dividends", 
@@ -91,17 +94,15 @@ class App:
         date_config_frame = ttk.Frame(self.top_right_controls_frame)
         date_config_frame.pack(fill="x", pady=(0,10))
         
-        # Renamed UI elements for dates
         ttk.Label(date_config_frame, text="Fit Start Date:").grid(row=0, column=0, sticky="w", padx=(0,2))
-        self.fit_start_date_entry = ttk.Entry(date_config_frame, width=12) # Was plot_hist_start_date_entry
+        self.fit_start_date_entry = ttk.Entry(date_config_frame, width=12)
         self.fit_start_date_entry.grid(row=0, column=1, sticky="ew", padx=(0,5))
         self.fit_start_date_entry.insert(0, (date.today() - timedelta(days=365*2)).strftime("%Y-%m-%d"))
         
         ttk.Label(date_config_frame, text="Fit End Date:").grid(row=1, column=0, sticky="w", padx=(0,2))
-        self.fit_end_date_entry = ttk.Entry(date_config_frame, width=12) # Was fitting_start_date_entry
+        self.fit_end_date_entry = ttk.Entry(date_config_frame, width=12)
         self.fit_end_date_entry.grid(row=1, column=1, sticky="ew")
-        self.fit_end_date_entry.insert(0, (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")) # Default Fit End to 1 month ago
-        
+        self.fit_end_date_entry.insert(0, (date.today() - timedelta(days=30)).strftime("%Y-%m-%d"))
         date_config_frame.grid_columnconfigure(1, weight=1)
 
         alloc_display_outer_frame = ttk.LabelFrame(self.top_right_controls_frame, text="Selected Allocator Details", padding=5)
@@ -119,117 +120,25 @@ class App:
         self.allocations_text_widget.insert(tk.END, "Select an allocator to view its details.")
         self.allocations_text_widget.config(state=tk.DISABLED, background=self.root.cget('bg'))
 
-        bottom_frame_outer = ttk.Frame(main_v_pane)
-        main_v_pane.add(bottom_frame_outer, weight=2)
-        bottom_h_pane = ttk.PanedWindow(bottom_frame_outer, orient=tk.HORIZONTAL)
-        bottom_h_pane.pack(fill=tk.BOTH, expand=True)
-        self.instrument_mgmt_frame = ttk.LabelFrame(bottom_h_pane, text="Instrument Setup", padding=5)
-        bottom_h_pane.add(self.instrument_mgmt_frame, weight=1)
-        self._create_instrument_management_ui()
-        self.allocator_mgmt_frame = ttk.LabelFrame(bottom_h_pane, text="Allocator Setup", padding=5)
-        bottom_h_pane.add(self.allocator_mgmt_frame, weight=1)
+        # --- Bottom area: Allocator Management Only ---
+        bottom_frame_outer = ttk.Frame(main_v_pane) 
+        main_v_pane.add(bottom_frame_outer, weight=1) # Adjusted weight, can be tuned
+        
+        self.allocator_mgmt_frame = ttk.LabelFrame(bottom_frame_outer, text="Allocator Setup", padding=5)
+        self.allocator_mgmt_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0) # Takes full space of bottom_frame_outer
         self._create_allocator_management_ui()
 
         self._setup_plot_axes_appearance()
-        self._set_initial_plot_view_limits() # Uses fit_end_date_entry now for plot start
+        self._set_initial_plot_view_limits()
         self.fig.tight_layout()
         self.canvas.draw()
         self.status_bar = ttk.Label(self.root, text="Ready", relief=tk.SUNKEN, anchor=tk.W)
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=0, pady=0)
 
-    # ... (_create_instrument_management_ui, _add_instrument_row_ui, _delete_instrument_row_ui,
-    #      _validate_single_instrument_entry_for_duplicates, _collect_and_validate_instruments,
-    #      _create_allocator_management_ui, _redraw_allocator_list_ui, _on_allocator_enable_changed,
-    #      _on_create_allocator_button_click, _on_configure_existing_allocator, _on_delete_allocator
-    #      remain unchanged from the previous response. Ensure they are present and complete.)
-    def _create_instrument_management_ui(self):
-        ttk.Button(self.instrument_mgmt_frame, text="Add Instrument Row", command=self._add_instrument_row_ui).pack(pady=5, fill="x")
-        list_area = ttk.Frame(self.instrument_mgmt_frame)
-        list_area.pack(fill="both", expand=True)
-        self.instruments_canvas = tk.Canvas(list_area, borderwidth=0, highlightthickness=0)
-        self.instruments_list_scrollframe = ttk.Frame(self.instruments_canvas)
-        scrollbar = ttk.Scrollbar(list_area, orient="vertical", command=self.instruments_canvas.yview)
-        self.instruments_canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        self.instruments_canvas.pack(side="left", fill="both", expand=True)
-        self.instruments_canvas.create_window((0,0), window=self.instruments_list_scrollframe, anchor="nw")
-        self.instruments_list_scrollframe.bind("<Configure>", lambda e: self.instruments_canvas.configure(scrollregion=self.instruments_canvas.bbox("all")))
-        self.instrument_gui_rows = []
-
-    def _add_instrument_row_ui(self, instrument_name=""):
-        row_frame = ttk.Frame(self.instruments_list_scrollframe)
-        row_frame.pack(fill="x", pady=1)
-        entry = ttk.Entry(row_frame, width=20)
-        entry.insert(0, instrument_name) 
-        entry.pack(side="left", padx=(0,5), fill="x", expand=True)
-        entry.bind("<FocusOut>", lambda e, current_entry=entry: self._validate_single_instrument_entry_for_duplicates(current_entry))
-        del_btn = ttk.Button(row_frame, text=DELETE_ICON, width=3, style="Danger.TButton",
-                             command=lambda rf=row_frame: self._delete_instrument_row_ui(rf))
-        del_btn.pack(side="left", padx=(0,2))
-        self.instrument_gui_rows.append({'frame': row_frame, 'entry': entry})
-        self.instruments_list_scrollframe.update_idletasks()
-        self.instruments_canvas.configure(scrollregion=self.instruments_canvas.bbox("all"))
-        if not instrument_name: 
-            entry.focus_set()
-
-    def _delete_instrument_row_ui(self, row_frame_to_delete: ttk.Frame):
-        for i, row_data in enumerate(self.instrument_gui_rows):
-            if row_data['frame'] == row_frame_to_delete:
-                row_data['frame'].destroy()
-                del self.instrument_gui_rows[i]
-                self.set_status("Instrument row removed. Click 'FIT & PLOT' to apply changes.")
-                for r_data in self.instrument_gui_rows: 
-                    self._validate_single_instrument_entry_for_duplicates(r_data['entry'])
-                self.instruments_list_scrollframe.update_idletasks()
-                self.instruments_canvas.configure(scrollregion=self.instruments_canvas.bbox("all"))
-                return
-
-    def _validate_single_instrument_entry_for_duplicates(self, current_entry: ttk.Entry):
-        if not current_entry.winfo_exists(): return True
-        current_value = current_entry.get().strip().upper() 
-        current_entry.delete(0, tk.END) 
-        current_entry.insert(0, current_value)
-        is_duplicate = False
-        if current_value: 
-            for row_data in self.instrument_gui_rows:
-                entry_widget = row_data['entry']
-                if entry_widget.winfo_exists() and entry_widget != current_entry and entry_widget.get().strip() == current_value:
-                    is_duplicate = True
-                    break
-        current_entry.configure(style="Error.TEntry" if is_duplicate and current_value else "TEntry")
-        return not (is_duplicate and current_value)
-
-    def _collect_and_validate_instruments(self) -> Optional[Set[str]]:
-        instruments = set()
-        all_entries_valid_individually = True
-        for row_data in self.instrument_gui_rows:
-            entry = row_data['entry']
-            if not entry.winfo_exists(): continue
-            val_upper = entry.get().strip().upper()
-            entry.delete(0, tk.END)
-            entry.insert(0, val_upper)
-            if not self._validate_single_instrument_entry_for_duplicates(entry):
-                if entry.get().strip(): 
-                    all_entries_valid_individually = False
-            val = entry.get().strip() 
-            if val: instruments.add(val)
-
-        if not all_entries_valid_individually:
-            messagebox.showerror("Input Error", "Duplicate instrument names found (marked red). Please correct them.", parent=self.root)
-            return None
-        
-        if self.current_instruments_set != instruments: 
-            print(f"DEBUG: Instrument set changed from {self.current_instruments_set} to {instruments}")
-            self.current_instruments_set = instruments
-            for aid, data in self.allocators_store.items():
-                try:
-                    data['instance'].on_instruments_changed(self.current_instruments_set)
-                except Exception as e:
-                    msg = f"Error updating {data['instance'].name} with new instruments: {e}"
-                    print(msg)
-                    self.set_status(msg, error=True)
-            self._refresh_allocations_display_area() 
-        return instruments
+    # Global instrument management UI methods (_create_instrument_management_ui, 
+    # _add_instrument_row_ui, _delete_instrument_row_ui, 
+    # _validate_single_instrument_entry_for_duplicates, 
+    # _collect_and_validate_instruments) have been REMOVED.
 
     def _create_allocator_management_ui(self):
         top_bar = ttk.Frame(self.allocator_mgmt_frame)
@@ -256,7 +165,8 @@ class App:
 
     def _redraw_allocator_list_ui(self):
         for widget in self.allocators_list_scrollframe.winfo_children(): widget.destroy()
-        sorted_allocator_items = sorted(self.allocators_store.items(), key=lambda item: item[1]['instance'].name.lower())
+        sorted_allocator_items = sorted(self.allocators_store.items(), key=lambda item: item[1]['instance'].get_name().lower())
+        
         for allocator_id, data in sorted_allocator_items:
             allocator_instance = data['instance']
             is_enabled_var = data['is_enabled_var']
@@ -264,7 +174,7 @@ class App:
             row_frame.pack(fill="x", pady=2, padx=2)
             chk = ttk.Checkbutton(row_frame, variable=is_enabled_var, text="", command=self._on_allocator_enable_changed)
             chk.pack(side="left", padx=(0,2))
-            name_label = ttk.Label(row_frame, text=allocator_instance.name, width=20, anchor="w", relief="groove", padding=2)
+            name_label = ttk.Label(row_frame, text=allocator_instance.get_name(), width=20, anchor="w", relief="groove", padding=2)
             name_label.pack(side="left", padx=2, fill="x", expand=True)
             config_btn = ttk.Button(row_frame, text=GEAR_ICON, width=3, style="Toolbutton.TButton",
                                     command=lambda aid=allocator_id: self._on_configure_existing_allocator(aid))
@@ -289,22 +199,34 @@ class App:
         if not AllocatorClass:
             messagebox.showerror("Error", f"Unknown allocator type: {allocator_type_name}", parent=self.root)
             return
-        current_instruments = self._collect_and_validate_instruments()
-        if current_instruments is None: return
-        new_allocator_instance = AllocatorClass.configure_or_create(
-            parent_window=self.root, current_instruments=current_instruments, existing_allocator=None)
-        if new_allocator_instance:
-            new_name_lower = new_allocator_instance.name.lower()
-            for data in self.allocators_store.values():
-                if data['instance'].name.lower() == new_name_lower:
-                    messagebox.showerror("Create Allocator", f"An allocator with the name '{new_allocator_instance.name}' already exists.", parent=self.root)
+
+        new_allocator_state = AllocatorClass.configure(parent_window=self.root, existing_state=None)
+
+        if new_allocator_state:
+            try:
+                new_allocator_name = str(new_allocator_state.get('name', ''))
+                if not new_allocator_name:
+                    messagebox.showerror("Create Allocator", "Allocator configuration did not return a valid name.", parent=self.root)
                     return
+
+                new_name_lower = new_allocator_name.lower()
+                for data in self.allocators_store.values():
+                    if data['instance'].get_name().lower() == new_name_lower:
+                        messagebox.showerror("Create Allocator", f"An allocator with the name '{new_allocator_name}' already exists.", parent=self.root)
+                        return
+                
+                new_allocator_instance = AllocatorClass(**new_allocator_state)
+            except Exception as e:
+                messagebox.showerror("Create Allocator", f"Failed to create allocator instance: {e}", parent=self.root)
+                self.set_status(f"Error creating {allocator_type_name}: {e}", error=True)
+                return
+
             allocator_id = str(uuid.uuid4())
             self.allocators_store[allocator_id] = {
                 'instance': new_allocator_instance, 
                 'is_enabled_var': tk.BooleanVar(value=True)
             }
-            self.set_status(f"Allocator '{new_allocator_instance.name}' created.", success=True)
+            self.set_status(f"Allocator '{new_allocator_instance.get_name()}' created.", success=True)
             self._redraw_allocator_list_ui()
             self._refresh_allocations_display_area()
         else: 
@@ -315,31 +237,45 @@ class App:
         if not data_to_configure:
             messagebox.showerror("Error", "Allocator not found for configuration.", parent=self.root)
             return
+        
         existing_instance = data_to_configure['instance']
-        AllocatorClass = type(existing_instance) 
-        current_instruments = self._collect_and_validate_instruments()
-        if current_instruments is None: return
-        reconfigured_instance = AllocatorClass.configure_or_create(
+        AllocatorClass = type(existing_instance)
+        existing_state = existing_instance.get_state()
+
+        new_state_from_config = AllocatorClass.configure(
             parent_window=self.root, 
-            current_instruments=current_instruments, 
-            existing_allocator=existing_instance
+            existing_state=existing_state
         )
-        if reconfigured_instance:
-            new_name_lower = reconfigured_instance.name.lower()
-            for aid, data in self.allocators_store.items():
-                if aid != allocator_id_to_configure and data['instance'].name.lower() == new_name_lower:
-                    messagebox.showerror("Configure Allocator", f"An allocator with the name '{reconfigured_instance.name}' already exists (used by another allocator).", parent=self.root)
+
+        if new_state_from_config:
+            try:
+                new_allocator_name = str(new_state_from_config.get('name', ''))
+                if not new_allocator_name:
+                    messagebox.showerror("Configure Allocator", "Allocator configuration did not return a valid name.", parent=self.root)
                     return
+
+                new_name_lower = new_allocator_name.lower()
+                for aid, data in self.allocators_store.items():
+                    if aid != allocator_id_to_configure and data['instance'].get_name().lower() == new_name_lower:
+                        messagebox.showerror("Configure Allocator", f"An allocator with the name '{new_allocator_name}' already exists (used by another allocator).", parent=self.root)
+                        return
+                
+                reconfigured_instance = AllocatorClass(**new_state_from_config)
+            except Exception as e:
+                messagebox.showerror("Configure Allocator", f"Failed to reconfigure allocator instance: {e}", parent=self.root)
+                self.set_status(f"Error reconfiguring {existing_instance.get_name()}: {e}", error=True)
+                return
+
             self.allocators_store[allocator_id_to_configure]['instance'] = reconfigured_instance
-            self.set_status(f"Allocator '{reconfigured_instance.name}' reconfigured.", success=True)
+            self.set_status(f"Allocator '{reconfigured_instance.get_name()}' reconfigured.", success=True)
             self._redraw_allocator_list_ui()
             self._refresh_allocations_display_area() 
         else:
-            self.set_status(f"Reconfiguration of '{existing_instance.name}' cancelled.")
+            self.set_status(f"Reconfiguration of '{existing_instance.get_name()}' cancelled.")
 
     def _on_delete_allocator(self, allocator_id_to_delete: str):
         if allocator_id_to_delete in self.allocators_store:
-            allocator_name = self.allocators_store[allocator_id_to_delete]['instance'].name
+            allocator_name = self.allocators_store[allocator_id_to_delete]['instance'].get_name()
             if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete allocator '{allocator_name}'?", parent=self.root):
                 del self.allocators_store[allocator_id_to_delete]
                 self.set_status(f"Allocator '{allocator_name}' deleted.", success=True)
@@ -356,12 +292,6 @@ class App:
         if not is_auto_load_call:
             self.set_status("Processing Fit & Plot...")
 
-        current_instruments_from_ui = self._collect_and_validate_instruments()
-        if current_instruments_from_ui is None:
-            self.set_status("Update failed: Please fix instrument errors.", error=True)
-            return
-
-        # Date parsing for FITTING period
         fitting_start_dt = self.parse_date_entry(self.fit_start_date_entry, "Fit Start Date")
         fitting_end_dt = self.parse_date_entry(self.fit_end_date_entry, "Fit End Date")
         if not fitting_start_dt or not fitting_end_dt: return
@@ -370,15 +300,13 @@ class App:
             messagebox.showerror("Date Error", "Fit Start Date must be before Fit End Date.", parent=self.root)
             return
         
-        # PLOTTING period starts from Fit End Date and goes to today
-        plot_start_dt = fitting_end_dt # Performance plot starts where fitting ended
+        plot_start_dt = fitting_end_dt 
         plot_actual_end_dt = date.today()
 
         if plot_start_dt >= plot_actual_end_dt:
             messagebox.showerror("Date Error", 
                                  f"Fit End Date ({plot_start_dt.strftime('%Y-%m-%d')}) must be before today ({plot_actual_end_dt.strftime('%Y-%m-%d')}) to plot performance.", 
                                  parent=self.root)
-            # Clear plot if no valid plot period
             self.ax.clear()
             self._setup_plot_axes_appearance()
             self.ax.text(0.5, 0.5, "Plotting period is invalid.\nFit End Date must be before today.",
@@ -394,32 +322,29 @@ class App:
             if data['is_enabled_var'].get():
                 allocator = data['instance']
                 try:
-                    allocator.on_instruments_changed(current_instruments_from_ui) # Ensure allocator has latest instruments
-                    # Use fitting_start_dt and fitting_end_dt for computation
                     computed_allocs = allocator.compute_allocations(fitting_start_dt, fitting_end_dt)
-                    if computed_allocs is None:
+                    if computed_allocs is None: 
+                        print(f"Warning: Allocator {allocator.get_name()} returned None from compute_allocations.")
                         any_allocator_failed_computation = True; continue
                     enabled_allocators_data.append({'instance': allocator, 'computed_allocations': computed_allocs})
                 except Exception as e:
-                    msg = f"Error computing allocations for {allocator.name}: {e}"; print(msg)
+                    msg = f"Error computing allocations for {allocator.get_name()}: {e}"; print(msg)
                     self.set_status(msg, error=True);
                     any_allocator_failed_computation = True
         
         if not enabled_allocators_data and not any_allocator_failed_computation:
-             self.set_status("No allocators enabled or no allocations computed. Nothing to plot.", error=not is_auto_load_call) # ... (same as before)
+             self.set_status("No allocators enabled or no allocations computed. Nothing to plot.", error=not is_auto_load_call)
              self.ax.clear(); self._setup_plot_axes_appearance()
              self.ax.text(0.5, 0.5, "No data to plot. Enable allocators and ensure they compute.", ha='center', va='center', transform=self.ax.transAxes, fontsize='small')
              self.fig.tight_layout(); self.canvas.draw(); self._refresh_allocations_display_area()
              return
 
-        all_instruments_for_plot_data = {
-            ticker 
-            for alloc_data in enabled_allocators_data 
-            for ticker, weight in alloc_data['computed_allocations'].items() 
-            if abs(weight) > 1e-9
-        }
+        all_instruments_for_plot_data = set()
+        for alloc_data in enabled_allocators_data:
+            for ticker, weight in alloc_data['computed_allocations'].items():
+                if abs(weight) > 1e-9:
+                    all_instruments_for_plot_data.add(ticker)
         
-        # Extract data fetching to its own method
         historical_prices_for_plot, problematic_tickers_fetch = self._fetch_plot_data(
             all_instruments_for_plot_data, 
             plot_start_dt, 
@@ -432,67 +357,64 @@ class App:
 
         self.ax.clear()
         self._setup_plot_axes_appearance()
-        # Plotting X-axis is from plot_start_dt (Fit End Date) to today
         self.ax.set_xlim(plot_start_dt, plot_actual_end_dt)
         
         num_series_plotted = 0
         for alloc_data in enabled_allocators_data:
             allocator = alloc_data['instance']
             current_allocs = alloc_data['computed_allocations']
+            
             instruments_to_plot_for_this_alloc = {
                 inst for inst, weight in current_allocs.items() 
                 if abs(weight) > 1e-9 and inst in historical_prices_for_plot.columns and not historical_prices_for_plot[inst].isnull().all()
             }
 
             if not instruments_to_plot_for_this_alloc:
-                self.ax.plot([], [], label=f"{allocator.name} (No plottable data)"); num_series_plotted+=1; continue
+                self.ax.plot([], [], label=f"{allocator.get_name()} (No plottable data)"); num_series_plotted+=1; continue
 
             alloc_prices_for_plot_period = historical_prices_for_plot[list(instruments_to_plot_for_this_alloc)]
-            # Ensure prices for plot start at or before plot_start_dt to calculate first return on plot_start_dt
             alloc_prices_for_plot_period = alloc_prices_for_plot_period[alloc_prices_for_plot_period.index.date <= plot_actual_end_dt]
 
-
             if alloc_prices_for_plot_period.empty or alloc_prices_for_plot_period.shape[0] < 2:
-                self.ax.plot([], [], label=f"{allocator.name} (Insufficient data for plot period)"); num_series_plotted+=1; continue
+                self.ax.plot([], [], label=f"{allocator.get_name()} (Insufficient data for plot period)"); num_series_plotted+=1; continue
             
-            daily_returns = alloc_prices_for_plot_period.pct_change()#.iloc[1:]
-            
-            # Filter daily_returns to start from plot_start_dt (Fit End Date)
-            # The first return value will be for plot_start_dt, based on price at plot_start_dt and price at T-1.
+            daily_returns = alloc_prices_for_plot_period.pct_change()
             relevant_daily_returns = daily_returns[daily_returns.index.date >= plot_start_dt].copy()
-            relevant_daily_returns.dropna(how='all', inplace=True) # Drop if first row is all NaN due to pct_change on first day
+            relevant_daily_returns.dropna(how='all', inplace=True)
 
             if relevant_daily_returns.empty:
-                print(f"INFO ({allocator.name}): No daily returns available in the plotting period starting {plot_start_dt}.")
-                self.ax.plot([], [], label=f"{allocator.name} (No returns in plot period)"); num_series_plotted+=1; continue
+                print(f"INFO ({allocator.get_name()}): No daily returns available in the plotting period starting {plot_start_dt}.")
+                self.ax.plot([], [], label=f"{allocator.get_name()} (No returns in plot period)"); num_series_plotted+=1; continue
 
-            alloc_series = pd.Series({inst: current_allocs.get(inst, 0.0) for inst in relevant_daily_returns.columns if inst in current_allocs})
-            # Ensure columns align for dot product
-            cols_to_use = [col for col in alloc_series.index if col in relevant_daily_returns.columns]
-            portfolio_daily_returns = relevant_daily_returns[cols_to_use].mul(alloc_series[cols_to_use], axis=1).sum(axis=1)
+            alloc_series_data = {
+                inst: current_allocs.get(inst, 0.0) 
+                for inst in relevant_daily_returns.columns 
+                if inst in current_allocs
+            }
+            alloc_series = pd.Series(alloc_series_data)
             
-            # Cumulative returns: start plot with 0% on plot_start_dt (Fit End Date)
+            common_cols_for_dot_product = [col for col in alloc_series.index if col in relevant_daily_returns.columns]
+            
+            if not common_cols_for_dot_product:
+                 self.ax.plot([], [], label=f"{allocator.get_name()} (No common data for returns)"); num_series_plotted+=1; continue
+
+            portfolio_daily_returns = relevant_daily_returns[common_cols_for_dot_product].mul(alloc_series[common_cols_for_dot_product], axis=1).sum(axis=1)
+            
             plot_dates_series = [plot_start_dt]
-            cumulative_performance_series = [0.0] # Start at 0% on Fit End Date
+            cumulative_performance_series = [0.0]
 
             if not portfolio_daily_returns.empty:
-                # Cumprod on (1+r) and subtract 1 for cumulative returns
                 cumulative_calc = (1 + portfolio_daily_returns).cumprod() - 1
-                
                 for idx_date, cum_ret_val in cumulative_calc.items():
                     current_dt = idx_date.date() if isinstance(idx_date, pd.Timestamp) else idx_date
-                    # Add if date is after the start of the plot (which is plot_start_dt = fitting_end_dt)
-                    # The first point (plot_start_dt, 0.0) is already added.
-                    # We only add subsequent points.
-                    if current_dt > plot_dates_series[-1]: # Add if new date strictly after last
+                    if current_dt > plot_dates_series[-1]:
                         plot_dates_series.append(current_dt)
-                        cumulative_performance_series.append(cum_ret_val * 100.0) # As percentage
-                    elif current_dt == plot_dates_series[-1] and current_dt == plot_start_dt: # Update the 0% if a return is available on plot_start_dt itself
+                        cumulative_performance_series.append(cum_ret_val * 100.0)
+                    elif current_dt == plot_dates_series[-1] and current_dt == plot_start_dt:
                         cumulative_performance_series[-1] = cum_ret_val * 100.0
-
-
-            label_suffix = " (Performance)" # ... (same suffix logic as before)
-            self.ax.plot(plot_dates_series, cumulative_performance_series, linestyle='-', label=f"{allocator.name}{label_suffix}")
+            
+            label_suffix = " (Performance)"
+            self.ax.plot(plot_dates_series, cumulative_performance_series, linestyle='-', label=f"{allocator.get_name()}{label_suffix}")
             num_series_plotted +=1
         
         if num_series_plotted > 0 : self.ax.legend(fontsize='x-small', loc='best')
@@ -500,7 +422,7 @@ class App:
 
         self.fig.autofmt_xdate(rotation=25, ha='right'); self.fig.tight_layout(pad=1.5); self.canvas.draw()
         self._refresh_allocations_display_area()
-        if not is_auto_load_call: # ... (same status message logic as before)
+        if not is_auto_load_call:
             status_msg = "Fit & Plot complete."
             if problematic_tickers_fetch: status_msg += " Some tickers had data issues for plotting."
             if any_allocator_failed_computation: status_msg += " Some allocators failed computation."
@@ -508,229 +430,194 @@ class App:
                             error=any_allocator_failed_computation)
 
     def _fetch_plot_data(self, instruments: Set[str], plot_start_dt: date, plot_end_dt: date, include_dividends: bool) -> Tuple[pd.DataFrame, Set[str]]:
-        """Fetch and process pricing data for plotting out-of-sample performance."""
-        
         if not instruments:
             return pd.DataFrame(), set()
 
-        print(f"DEBUG: Fetching PLOT data for: {instruments} from {plot_start_dt} to {plot_end_dt}, Dividends: {include_dividends}")
-        # Fetch data slightly earlier to ensure pct_change works for the actual plot_start_dt
         fetch_start_dt = plot_start_dt - timedelta(days=7)
-
-        # Assumes Fetcher.fetch returns (DataFrame, Set_of_problematic_tickers)
-        # and DataFrame has ('Field', 'Ticker') MultiIndex columns if not empty.
         fetched_df, initially_problematic_tickers = Fetcher.fetch(
-            list(instruments),
-            fetch_start_dt,
-            plot_end_dt,
-            include_dividends=include_dividends,
-            interval="1d"
+            list(instruments), fetch_start_dt, plot_end_dt,
+            include_dividends=include_dividends, interval="1d"
         )
-        
         current_problematic_tickers = set(initially_problematic_tickers)
 
         if fetched_df.empty:
-            current_problematic_tickers.update(instruments) # All originally requested are now problematic
+            current_problematic_tickers.update(instruments)
             return pd.DataFrame(), current_problematic_tickers
 
         field_name = 'AdjClose' if include_dividends else 'Close'
         
-        # Ensure the DataFrame columns are MultiIndex and 'Field' level exists
         if not (isinstance(fetched_df.columns, pd.MultiIndex) and 'Field' in fetched_df.columns.names):
-            print(f"WARNING: Fetched DataFrame for {instruments} does not have the expected MultiIndex ('Field', 'Ticker').")
+            print(f"WARNING: Fetched DataFrame for {instruments} does not have expected MultiIndex ('Field', 'Ticker').")
             current_problematic_tickers.update(instruments)
             return pd.DataFrame(), current_problematic_tickers
             
         available_fields = fetched_df.columns.get_level_values('Field').unique().tolist()
         if field_name not in available_fields:
-            print(f"WARNING: Required field '{field_name}' not in available fields: {available_fields} for {instruments}.")
+            print(f"WARNING: Required field '{field_name}' not in {available_fields} for {instruments}.")
             current_problematic_tickers.update(instruments)
             return pd.DataFrame(), current_problematic_tickers
             
         try:
-            # Select the desired field, making Tickers the columns
-            # Only operate on tickers that are not already known to be problematic from the fetcher
-            # and are present in the fetched_df's Ticker level.
-            valid_tickers_in_fetched_df_levels = set(fetched_df.columns.get_level_values('Ticker').unique())
-            
-            # These are the tickers we want AND are not initially problematic AND are in the fetched data structure
-            tickers_to_attempt_extraction = list(instruments - current_problematic_tickers & valid_tickers_in_fetched_df_levels)
+            valid_tickers_in_df = set(fetched_df.columns.get_level_values('Ticker').unique())
+            tickers_to_extract = list(instruments - current_problematic_tickers & valid_tickers_in_df)
 
-            if not tickers_to_attempt_extraction:
-                current_problematic_tickers.update(instruments) # All became problematic at this stage
+            if not tickers_to_extract:
+                current_problematic_tickers.update(instruments)
                 return pd.DataFrame(), current_problematic_tickers
 
-            # Filter fetched_df to only include the main field and potentially valid tickers before .xs
-            # This makes .xs safer.
-            # Construct the specific columns we want to select for the .xs operation
-            cols_for_xs_selection = pd.MultiIndex.from_product(
-                [[field_name], list(tickers_to_attempt_extraction)], # Ensure field_name is a list for product
-                names=['Field', 'Ticker']
-            )
-            
-            # Intersect with actual columns to prevent KeyError if some (field, ticker) pairs don't exist
-            actual_columns_to_select = fetched_df.columns.intersection(cols_for_xs_selection)
+            cols_for_xs = pd.MultiIndex.from_product([[field_name], tickers_to_extract], names=['Field', 'Ticker'])
+            actual_cols_to_select = fetched_df.columns.intersection(cols_for_xs)
 
-            if actual_columns_to_select.empty:
-                # None of the (field_name, ticker_to_extract) combinations exist in fetched_df
+            if actual_cols_to_select.empty:
                 current_problematic_tickers.update(instruments)
                 return pd.DataFrame(), current_problematic_tickers
             
-            # Perform the .xs operation on the subset of fetched_df that has relevant columns
-            processed_prices_df = fetched_df[actual_columns_to_select].xs(key=field_name, level='Field', axis=1, drop_level=True)
+            processed_df = fetched_df[actual_cols_to_select].xs(key=field_name, level='Field', axis=1, drop_level=True)
         
         except KeyError as e:
-            print(f"ERROR: KeyError during .xs operation for field '{field_name}': {e}. Marking all as problematic.")
+            print(f"ERROR: KeyError during .xs for '{field_name}': {e}.")
             current_problematic_tickers.update(instruments)
             return pd.DataFrame(), current_problematic_tickers
-        except Exception as e: # Catch any other unexpected error during .xs or column manipulation
-            print(f"ERROR: Unexpected error during data extraction for field '{field_name}': {e}. Marking all as problematic.")
+        except Exception as e:
+            print(f"ERROR: Unexpected error extracting field '{field_name}': {e}.")
             current_problematic_tickers.update(instruments)
             return pd.DataFrame(), current_problematic_tickers
 
-        # Identify any of the initially requested instruments that are not columns in our processed_prices_df
-        missing_after_extraction = instruments - set(processed_prices_df.columns)
+        missing_after_extraction = instruments - set(processed_df.columns)
         current_problematic_tickers.update(missing_after_extraction)
         
-        # Forward-fill and back-fill missing values (e.g., for holidays)
-        if processed_prices_df.empty: # No tickers survived the extraction
+        if processed_df.empty:
              return pd.DataFrame(), current_problematic_tickers
 
-        filled_prices_df = processed_prices_df.ffill().bfill()
+        filled_df = processed_df.ffill().bfill()
+        final_df = filled_df.dropna(axis=1, how='all')
         
-        # Drop any columns that are still entirely NaN (i.e., original series was empty or all NaN for the period)
-        final_prices_df = filled_prices_df.dropna(axis=1, how='all')
+        dropped_all_nans = set(filled_df.columns) - set(final_df.columns)
+        current_problematic_tickers.update(dropped_all_nans)
         
-        # Identify tickers dropped because they were all NaNs
-        dropped_due_to_all_nans = set(filled_prices_df.columns) - set(final_prices_df.columns)
-        current_problematic_tickers.update(dropped_due_to_all_nans)
-        
-        # Ensure the final DataFrame only contains tickers that were part of the original request
-        # and are not in the problematic set.
         surviving_requested_tickers = list(instruments - current_problematic_tickers)
+        final_df = final_df[[col for col in surviving_requested_tickers if col in final_df.columns]]
         
-        # Filter final_prices_df to include only these surviving requested tickers that are also actual columns
-        final_prices_df = final_prices_df[[col for col in surviving_requested_tickers if col in final_prices_df.columns]]
-        
-        return final_prices_df, current_problematic_tickers
+        return final_df, current_problematic_tickers
 
     def _save_application_state(self):
         self.set_status("Saving application state...")
-        current_instruments_to_save = [rd['entry'].get().strip().upper() for rd in self.instrument_gui_rows if rd['entry'].get().strip()]
         state = {
-            "instruments": current_instruments_to_save,
-            "fit_start_date": self.fit_start_date_entry.get(),   # Updated key
-            "fit_end_date": self.fit_end_date_entry.get(),     # Updated key
+            "fit_start_date": self.fit_start_date_entry.get(),
+            "fit_end_date": self.fit_end_date_entry.get(),
             "allocators": [],
             "plot_dividends": self.plot_dividends_var.get(),
-            "window_geometry": self.root.geometry()  # Save window geometry
+            "window_geometry": self.root.geometry()
         }
-        # ... (rest of save logic using instance.save_state() is same as previous response)
+
         for aid, data in self.allocators_store.items():
             instance = data['instance']
             allocator_type_name = None
             for type_name_key, AllocatorClassInMap in self.available_allocator_types.items():
                 if isinstance(instance, AllocatorClassInMap):
                     allocator_type_name = type_name_key; break
-            if not allocator_type_name: print(f"Warning: Type for {instance.name} not found. Skipping."); continue
-            config_params = instance.save_state()
+            
+            if not allocator_type_name:
+                print(f"Warning: Type for allocator '{instance.get_name()}' not found. Skipping."); continue
+
+            allocator_state_to_save = instance.get_state()
             state["allocators"].append({
-                "id": aid, "type_name": allocator_type_name, "instance_name": instance.name,
-                "is_enabled": data['is_enabled_var'].get(), "config_params": config_params
+                "id": aid, 
+                "type_name": allocator_type_name, 
+                "is_enabled": data['is_enabled_var'].get(),
+                "allocator_state": allocator_state_to_save 
             })
         
         try:
-            with open(SAVE_STATE_FILENAME, 'w') as f: json.dump(state, f, indent=4)
+            with open(SAVE_STATE_FILENAME, 'w') as f: 
+                json.dump(state, f, indent=4, default=lambda o: list(o) if isinstance(o, set) else o)
             self.set_status("Application state saved successfully.", success=True)
         except IOError as e:
-            self.set_status(f"Error saving state: {e}", error=True); messagebox.showerror("Save Error", f"Could not save state: {e}", parent=self.root)
-
+            self.set_status(f"Error saving state: {e}", error=True)
+            messagebox.showerror("Save Error", f"Could not save state: {e}", parent=self.root)
+        except TypeError as e:
+            self.set_status(f"Error serializing state for save: {e}", error=True)
+            messagebox.showerror("Save Error", f"Could not serialize state for saving: {e}. Ensure all state data is JSON-compatible.", parent=self.root)
 
     def _load_application_state(self) -> bool:
-        if not os.path.exists(SAVE_STATE_FILENAME): return False
+        if not os.path.exists(SAVE_STATE_FILENAME): 
+            self.set_status("No saved state file found.")
+            return False
         try:
             with open(SAVE_STATE_FILENAME, 'r') as f: state = json.load(f)
         except (IOError, json.JSONDecodeError) as e:
-            self.set_status(f"Error loading state file: {e}", error=True); messagebox.showwarning("Load Warning", f"Could not load state: {e}\nStarting fresh.", parent=self.root); return False
+            self.set_status(f"Error loading state file: {e}", error=True)
+            messagebox.showwarning("Load Warning", f"Could not load state: {e}\nStarting fresh.", parent=self.root)
+            return False
 
         try:
-            # Process the entire app state within this try block
-            for widget_data in self.instrument_gui_rows: widget_data['frame'].destroy()
-            self.instrument_gui_rows.clear(); loaded_instruments_set = set()
-            for name in state.get("instruments", []): 
-                u_name = name.upper(); self._add_instrument_row_ui(u_name); loaded_instruments_set.add(u_name)
-            self.current_instruments_set = loaded_instruments_set
-
-            # Restore dates with new keys
             self.fit_start_date_entry.delete(0, tk.END)
-            self.fit_start_date_entry.insert(0, state.get("fit_start_date", (date.today() - timedelta(days=365*2)).strftime("%Y-%m-%d"))) # Updated key
+            self.fit_start_date_entry.insert(0, state.get("fit_start_date", (date.today() - timedelta(days=365*2)).strftime("%Y-%m-%d")))
             self.fit_end_date_entry.delete(0, tk.END)
-            self.fit_end_date_entry.insert(0, state.get("fit_end_date", (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")))   # Updated key
+            self.fit_end_date_entry.insert(0, state.get("fit_end_date", (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")))
 
-            # Restore plot dividends state if present
             if state.get("plot_dividends", False):
-                self.plot_dividends_var.set(True)
-                self.plot_dividends_checkbox.state(['selected'])
+                self.plot_dividends_var.set(True); self.plot_dividends_checkbox.state(['selected'])
             else:
-                self.plot_dividends_var.set(False)
-                self.plot_dividends_checkbox.state(['!selected'])
+                self.plot_dividends_var.set(False); self.plot_dividends_checkbox.state(['!selected'])
                 
-            # Restore window geometry if present
-            if "window_geometry" in state:
-                self.root.geometry(state["window_geometry"])
+            if "window_geometry" in state: self.root.geometry(state["window_geometry"])
 
             self.allocators_store.clear()
-            # Load allocators
             for saved_alloc_data in state.get("allocators", []):
-                allocator_type_name = saved_alloc_data["type_name"]
+                allocator_type_name = saved_alloc_data.get("type_name")
                 AllocatorClass = self.available_allocator_types.get(allocator_type_name)
                 if not AllocatorClass: 
-                    print(f"Warning: Unknown type '{allocator_type_name}'. Skipping."); continue
-                instance_name = saved_alloc_data["instance_name"]; config_params = saved_alloc_data["config_params"]
-                allocator_id = saved_alloc_data.get("id", str(uuid.uuid4())); new_instance: Optional[PortfolioAllocator] = None
-                try:
-                    if AllocatorClass == MarkovitsAllocator: 
-                        new_instance = AllocatorClass(name=instance_name, initial_instruments=self.current_instruments_set.copy())
-                    else: 
-                        new_instance = AllocatorClass(name=instance_name)
-                    new_instance.load_state(config_params, self.current_instruments_set.copy())
-                except Exception as e: 
-                    print(f"ERROR: Failed to load '{instance_name}': {e}"); 
-                    self.set_status(f"Error loading {instance_name}: {e}", error=True); 
+                    print(f"Warning: Unknown allocator type '{allocator_type_name}'. Skipping."); continue
+                
+                allocator_state_from_save = saved_alloc_data.get("allocator_state")
+                if not allocator_state_from_save or not isinstance(allocator_state_from_save, dict):
+                    print(f"Warning: Missing/invalid 'allocator_state' for type '{allocator_type_name}'. Skipping.")
                     continue
+                
+                if 'name' not in allocator_state_from_save: # Should be guaranteed by save, but good check
+                    allocator_state_from_save['name'] = f"Unnamed {allocator_type_name} {str(uuid.uuid4())[:4]}"
+                
+                if 'instruments' in allocator_state_from_save and isinstance(allocator_state_from_save['instruments'], list):
+                    allocator_state_from_save['instruments'] = set(allocator_state_from_save['instruments'])
+
+                allocator_id = saved_alloc_data.get("id", str(uuid.uuid4())); 
+                new_instance: Optional[PortfolioAllocator] = None
+                try:
+                    new_instance = AllocatorClass(**allocator_state_from_save)
+                except Exception as e: 
+                    loaded_name = allocator_state_from_save.get('name', 'unknown allocator')
+                    print(f"ERROR: Failed to initialize allocator '{loaded_name}': {e}"); 
+                    self.set_status(f"Error loading {loaded_name}: {e}", error=True)
+                    continue
+                
                 if new_instance: 
                     self.allocators_store[allocator_id] = {
                         'instance': new_instance, 
                         'is_enabled_var': tk.BooleanVar(value=saved_alloc_data.get("is_enabled", True))
                     }
-                else: 
-                    print(f"Warning: Could not recreate '{instance_name}'.")
             
             self._redraw_allocator_list_ui(); 
             self._refresh_allocations_display_area()
-            self._set_initial_plot_view_limits() # Uses fit_end_date_entry
+            self._set_initial_plot_view_limits()
             self.canvas.draw()
-            self._on_global_update_button_click(is_auto_load_call=True) # Plot after load
-            
+            if self.allocators_store:
+                self._on_global_update_button_click(is_auto_load_call=True)
+            else:
+                self.set_status("State loaded. No allocators defined to plot.")
             return True
             
         except Exception as e:
             self.set_status(f"Critical error processing loaded state: {e}", error=True); 
-            import traceback
-            traceback.print_exc()
+            import traceback; traceback.print_exc()
             messagebox.showerror("Load Error", f"Critical error processing state: {e}\nStarting fresh.", parent=self.root)
-            self.current_instruments_set = set(); 
-            for rd in self.instrument_gui_rows: 
-                rd['frame'].destroy()
-            self.instrument_gui_rows.clear()
             self.allocators_store.clear()
-            self._add_instrument_row_ui()
             self._redraw_allocator_list_ui()
+            self._refresh_allocations_display_area()
             return False
 
     def _update_allocator_selector_dropdown(self):
-        # ... (Unchanged from previous response)
-        allocator_names = sorted([data['instance'].name for data in self.allocators_store.values()])
+        allocator_names = sorted([data['instance'].get_name() for data in self.allocators_store.values()])
         current_selection = self.allocator_selector_var.get()
         self.allocator_selector_combo['values'] = allocator_names
         if allocator_names: 
@@ -739,29 +626,44 @@ class App:
         else: self.allocator_selector_var.set("") 
 
     def _refresh_allocations_display_area(self):
-        # ... (Unchanged from previous response)
         self.allocations_text_widget.config(state=tk.NORMAL, background='white'); self.allocations_text_widget.delete("1.0", tk.END)
-        selected_allocator_name = self.allocator_selector_var.get(); display_text = "No allocator selected or not found."
-        found_data = None
+        selected_allocator_name = self.allocator_selector_var.get(); 
+        display_text = "No allocator selected or not found."
+        found_allocator_data = None
+        
         if selected_allocator_name:
             for data_dict in self.allocators_store.values(): 
-                if data_dict['instance'].name == selected_allocator_name: found_data = data_dict; break
-        if found_data:
-            allocator = found_data['instance']; is_enabled = found_data['is_enabled_var'].get()
-            allocs = allocator.allocations 
+                if data_dict['instance'].get_name() == selected_allocator_name: 
+                    found_allocator_data = data_dict; break
+        
+        if found_allocator_data:
+            allocator = found_allocator_data['instance']
+            is_enabled = found_allocator_data['is_enabled_var'].get()
+            
+            allocs = getattr(allocator, '_allocations', {})
+
             status_text = "ENABLED" if is_enabled else "DISABLED"
-            display_text = f"Allocator: '{allocator.name}' ({status_text})\nType: {type(allocator).__name__}\n"
-            if isinstance(allocator, MarkovitsAllocator): display_text += f"Optimization: {allocator.optimization_target}\nAllows Shorting: {allocator._allow_shorting}\n"
+            display_text = f"Allocator: '{allocator.get_name()}' ({status_text})\nType: {type(allocator).__name__}\n"
+            display_text += f"Instruments: {', '.join(sorted(list(allocator.get_instruments()))) if allocator.get_instruments() else 'None'}\n"
+            
+            if isinstance(allocator, MarkovitsAllocator):
+                display_text += f"Optimization: {allocator.optimization_target}\n"
+                display_text += f"Allows Shorting: {allocator._allow_shorting}\n"
+                display_text += f"Use Adjusted Close: {allocator._use_adj_close}\n"
+            
             if allocs: 
                 alloc_sum = sum(allocs.values())
-                display_text += "\nLast Computed Allocations:\n" + "\n".join([f"  {inst}: {percent:.2%}" for inst, percent in sorted(allocs.items()) if abs(percent)>1e-9])
+                display_text += "\nLast Computed Allocations (after Fit & Plot):\n" + "\n".join([f"  {inst}: {percent:.2%}" for inst, percent in sorted(allocs.items()) if abs(percent)>1e-9])
                 if not (abs(alloc_sum - 1.0) < 1e-7 or (not any(abs(v)>1e-9 for v in allocs.values()) and abs(alloc_sum) < 1e-9)):
                     display_text += f"\n\nWARNING: Allocations sum to {alloc_sum*100:.2f}%."
-                elif not any(abs(v)>1e-9 for v in allocs.values()): display_text += "\n(All allocations are zero)"
+                elif not any(abs(v)>1e-9 for v in allocs.values()): 
+                    display_text += "\n(All allocations are zero)"
             else: 
-                display_text += "\nNo allocations computed or set."
-                if self.current_instruments_set and is_enabled: display_text += "\nConsider running 'FIT & PLOT'."
-        elif not self.allocators_store: display_text = "No allocators created yet."
+                display_text += "\nNo allocations computed yet or available."
+                if is_enabled : display_text += "\nRun 'FIT & PLOT' to compute."
+        elif not self.allocators_store:
+            display_text = "No allocators created yet."
+        
         self.allocations_text_widget.insert(tk.END, display_text)
         self.allocations_text_widget.config(state=tk.DISABLED, background=self.root.cget('bg'))
 
@@ -769,61 +671,57 @@ class App:
         self.ax.clear() 
         self.ax.set_xlabel("Date")
         self.ax.set_ylabel("Cumulative Performance (%)")
-        self.ax.set_title("Portfolio Performance (Out-of-Sample)") # Updated title
+        self.ax.set_title("Portfolio Performance (Out-of-Sample)")
         self.ax.grid(True, linestyle=':', alpha=0.7)
         self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
         self.ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=5, maxticks=12, interval_multiples=True))
         self.ax.yaxis.set_major_formatter(mtick.PercentFormatter())
 
     def _set_initial_plot_view_limits(self):
-        # Plot starts from Fit End Date
         try:
-            start_dt_str = self.fit_end_date_entry.get() # Use Fit End Date as plot start
+            start_dt_str = self.fit_end_date_entry.get() 
             start_dt = datetime.strptime(start_dt_str, "%Y-%m-%d").date()
             end_dt = date.today()
-            if start_dt < end_dt: # Ensure plot start is before plot end (today)
+            if start_dt < end_dt: 
                 self.ax.set_xlim(start_dt, end_dt)
-            else: # Fallback if fit_end_date is today or later
-                self.ax.set_xlim(end_dt - timedelta(days=30), end_dt) # Show last 30 days
+            else: 
+                self.ax.set_xlim(end_dt - timedelta(days=30), end_dt)
         except ValueError: 
             self.ax.set_xlim(date.today() - timedelta(days=30), date.today())
 
     def parse_date_entry(self, entry_widget: ttk.Entry, date_name: str) -> Optional[date]:
-        # ... (Unchanged from previous response)
         date_str = entry_widget.get().strip()
         if not date_str: messagebox.showerror("Input Error", f"{date_name} cannot be empty.", parent=self.root); return None
         try: return datetime.strptime(date_str, "%Y-%m-%d").date()
         except ValueError: messagebox.showerror("Input Error", f"Invalid {date_name} (YYYY-MM-DD).", parent=self.root); return None
 
     def set_status(self, message: str, error: bool = False, success: bool = False):
-        # ... (Unchanged from previous response)
         self.status_bar.config(text=message)
         if error: self.status_bar.config(foreground="white", background="#A62F03")
         elif success: self.status_bar.config(foreground="white", background="#027A48")
         else: self.status_bar.config(foreground="black", background=ttk.Style().lookup('TLabel', 'background'))
 
     def _on_window_closing(self):
-        """Save window geometry when the app is closed (preserves existing state)"""
         try:
-            # Load existing state if available
             existing_state = {}
             if os.path.exists(SAVE_STATE_FILENAME):
-                with open(SAVE_STATE_FILENAME, 'r') as f:
-                    existing_state = json.load(f)
+                try:
+                    with open(SAVE_STATE_FILENAME, 'r') as f:
+                        existing_state = json.load(f)
+                except (IOError, json.JSONDecodeError) as e:
+                    print(f"Warning: Could not load existing state on close to save geometry: {e}")
             
-            # Update ONLY the window geometry in the state
             existing_state["window_geometry"] = self.root.geometry()
             
-            # Save the updated state
             with open(SAVE_STATE_FILENAME, 'w') as f:
-                json.dump(existing_state, f, indent=4)
+                json.dump(existing_state, f, indent=4, default=lambda o: list(o) if isinstance(o, set) else o)
         except Exception as e:
             print(f"Error saving window geometry on close: {e}")
         finally:
             self.root.destroy()
 
 if __name__ == "__main__":
-    multiprocessing.freeze_support() # Added for PyInstaller .exe compatibility
+    multiprocessing.freeze_support() 
     root = tk.Tk()
     style = ttk.Style()
     if 'clam' in style.theme_names(): 
