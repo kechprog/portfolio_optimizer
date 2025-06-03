@@ -5,6 +5,12 @@ from typing import Dict, Optional, Type, Any, Set, TypeVar
 from datetime import date
 import tkinter as tk
 
+# Assuming portfolio.py is in the parent directory of allocator/
+# Adjust import path if portfolio.py is located elsewhere relative to this file.
+# For example, if portfolio.py is in the same directory as app.py (portfolio_optimizer/),
+# and this allocator.py is in portfolio_optimizer/allocator/
+from portfolio import Portfolio # Changed from relative to direct
+
 # Type alias for the state dictionary
 AllocatorState = Dict[str, Any]
 
@@ -77,20 +83,26 @@ class PortfolioAllocator(ABC):
         pass
 
     @abstractmethod
-    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date) -> Dict[str, float]:
+    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date) -> Portfolio:
         """
         Computes the portfolio allocations based on the allocator's current state
-        and the given fitting period.
+        and the given fitting period, returning a Portfolio object.
+
+        The returned Portfolio object will typically contain a single segment
+        spanning from fitting_start_date to fitting_end_date for allocators
+        that do not inherently model time-varying allocations.
 
         Args:
-            fitting_start_date: The start date for the data used in fitting/computation.
-            fitting_end_date: The end date for the data used in fitting/computation.
+            fitting_start_date: The start date for the data used in fitting/computation,
+                                and likely the start date of the returned Portfolio.
+            fitting_end_date: The end date for the data used in fitting/computation,
+                              and likely the end date for the primary segment in the Portfolio.
 
         Returns:
-            A dictionary where keys are instrument tickers (str) and values are their
-            corresponding percentage allocations (float, e.g., 0.5 for 50%).
-            Returns an empty dictionary or allocations summing to zero if computation
-            is not possible, results in no holdings, or if no instruments are defined.
+            A Portfolio object representing the allocations for the specified period.
+            For allocators that compute a static allocation for the period,
+            this Portfolio object will contain one segment from fitting_start_date
+            to fitting_end_date with these allocations.
         """
         pass
 

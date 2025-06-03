@@ -10,7 +10,8 @@ import tkinter as tk
 from tkinter import ttk, simpledialog, messagebox
 import uuid
 
-from .allocator import PortfolioAllocator, AllocatorState, PAL 
+from .allocator import PortfolioAllocator, AllocatorState, PAL
+from portfolio import Portfolio # Added import
 from data_getter import av_fetcher
 
 logger = logging.getLogger(__name__)
@@ -68,13 +69,18 @@ class MarkovitsAllocator(PortfolioAllocator):
         # 'name' and 'instruments' are assumed to be managed by base or Dialog->state pipeline
         return current_state
 
-    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date) -> Dict[str, float]:
+    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date) -> Portfolio:
         current_instruments = self.get_instruments()
+        # Initialize a Portfolio object. It will be returned, possibly with no segments if errors occur.
+        portfolio = Portfolio(start_date=fitting_start_date)
+        
+        # This internal _allocations dict is used to build the result for the Portfolio segment
         self._allocations = {instrument: 0.0 for instrument in current_instruments}
 
+
         if not current_instruments:
-            logger.warning(f"({self.get_name()}): No instruments defined. Cannot compute allocations.")
-            return self._allocations.copy()
+            logger.warning(f"({self.get_name()}): No instruments defined. Cannot compute allocations. Returning empty portfolio.")
+            return portfolio # Return empty portfolio
 
         logger.info(f"({self.get_name()}): Computing allocations for {current_instruments} from {fitting_start_date} to {fitting_end_date}. AdjClose: {self._use_adj_close}")
         
@@ -95,17 +101,17 @@ class MarkovitsAllocator(PortfolioAllocator):
             )
         except Exception as e:
             logger.error(f"({self.get_name()}): Data fetching call failed: {e}", exc_info=True)
-            return self._allocations.copy()
+            return portfolio # Return empty portfolio
 
         if raw_data_df.empty:
             logger.warning(f"({self.get_name()}): No data returned from fetcher for {current_instruments}. Flawed tickers reported: {flawed_tickers_from_fetcher_upper}")
-            return self._allocations.copy()
+            return portfolio # Return empty portfolio
 
         valid_instruments_upper = requested_instruments_upper - set(flawed_tickers_from_fetcher_upper)
         
         if not valid_instruments_upper:
             logger.warning(f"({self.get_name()}): No valid instruments after fetcher processing. Flawed: {flawed_tickers_from_fetcher_upper}")
-            return self._allocations.copy()
+            return portfolio # Return empty portfolio
 
         prices_df_list = []
         # Determine field based on the allocator's use_adj_close setting
@@ -132,7 +138,7 @@ class MarkovitsAllocator(PortfolioAllocator):
         
         if not prices_df_list:
             logger.warning(f"({self.get_name()}): No valid price series found for any instrument after extraction. Cannot compute.")
-            return self._allocations.copy()
+            return portfolio # Return empty portfolio
             
         prices = pd.concat(prices_df_list, axis=1).sort_index()
         
@@ -149,14 +155,14 @@ class MarkovitsAllocator(PortfolioAllocator):
 
         if prices.empty or prices.shape[0] < 2 or prices.shape[1] == 0 :
             logger.warning(f"({self.get_name()}): Not enough historical data points ({prices.shape[0]}) or instruments ({prices.shape[1]}) after processing. Cannot compute.")
-            return self._allocations.copy()
+            return portfolio # Return empty portfolio
 
         try:
             mu = expected_returns.mean_historical_return(prices, compounding=True, frequency=252)
             S = risk_models.CovarianceShrinkage(prices, frequency=252).ledoit_wolf()
         except Exception as e:
             logger.error(f"({self.get_name()}): Could not calculate mu/S: {e}. Prices Columns: {prices.columns}", exc_info=True)
-            return self._allocations.copy()
+            return portfolio # Return empty portfolio
 
         weight_bounds = (-1.0 if self._allow_shorting else 0.0, 1.0)
         ef = EfficientFrontier(mu, S, weight_bounds=weight_bounds)
@@ -181,15 +187,23 @@ class MarkovitsAllocator(PortfolioAllocator):
                     # This case should ideally not happen if prices DataFrame is correctly formed with original ticker names
                     logger.warning(f"({self.get_name()}): Ticker '{ticker}' from optimization results not in the pre-initialized allocation keys. This might indicate an issue mapping back to original tickers. Allocations available for: {list(self._allocations.keys())}")
 
-            logger.info(f"({self.get_name()}): Computed allocations: {self._allocations}")
-            return self._allocations.copy()
+            logger.info(f"({self.get_name()}): Computed allocations for segment: {self._allocations}")
+            
+            # Add the computed allocations as a segment to the portfolio
+            if fitting_end_date > fitting_start_date:
+                portfolio.append(end_date=fitting_end_date, allocations=self._allocations.copy())
+                logger.info(f"({self.get_name()}): Appended segment to portfolio from {fitting_start_date} to {fitting_end_date}.")
+            else:
+                logger.warning(f"({self.get_name()}): fitting_end_date ({fitting_end_date}) is not after fitting_start_date ({fitting_start_date}). Computed allocations not added to portfolio.")
+
+            return portfolio
 
         except ValueError as ve:
              logger.error(f"({self.get_name()}): Optimization failed for '{self.optimization_target}': {ve}", exc_info=True)
-             return self._allocations.copy()
+             return portfolio # Return empty portfolio
         except Exception as e:
             logger.error(f"({self.get_name()}): Unexpected error during optimization for '{self.optimization_target}': {e}", exc_info=True)
-            return self._allocations.copy()
+            return portfolio # Return empty portfolio
 
     @classmethod
     def configure(cls: Type['MarkovitsAllocator'],
