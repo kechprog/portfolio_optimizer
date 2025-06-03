@@ -373,11 +373,17 @@ class App:
                 allocator = data['instance']
                 allocator._last_computed_portfolio = None # Clear previous
                 try:
+<<<<<<< HEAD
                     # compute_allocations now returns a Portfolio object
                     computed_portfolio = allocator.compute_allocations(fitting_start_dt, fitting_end_dt)
                     
                     if not isinstance(computed_portfolio, Portfolio):
                         logger.error(f"Allocator {allocator.get_name()} did not return a Portfolio object. Type: {type(computed_portfolio)}")
+=======
+                    computed_allocs = allocator.compute_allocations(fitting_start_dt, fitting_end_dt)
+                    if computed_allocs is None: 
+                        logger.warning(f"Allocator {allocator.get_name()} returned None from compute_allocations.")
+>>>>>>> 3d44c10 (cleanup and better ui)
                         any_allocator_failed_computation = True; continue
                     allocator._last_computed_portfolio = computed_portfolio # Store for display
 
@@ -399,6 +405,7 @@ class App:
                         # 'computed_portfolio': computed_portfolio # Could also store this if needed later here
                     })
                 except Exception as e:
+<<<<<<< HEAD
                     msg = f"Error computing allocations for {allocator.get_name()}: {e}";
                     logger.error(msg, exc_info=True)
                     # Check for no efficient target message
@@ -406,6 +413,10 @@ class App:
                         messagebox.showerror("Optimization Error", f"Allocator '{allocator.get_name()}' has no efficient target for the given requirements.", parent=self.root)
                     else:
                         self.set_status(msg, error=True)
+=======
+                    msg = f"Error computing allocations for {allocator.get_name()}: {e}"; logger.error(msg)
+                    self.set_status(msg, error=True);
+>>>>>>> 3d44c10 (cleanup and better ui)
                     any_allocator_failed_computation = True
         
         if not enabled_allocators_data and not any_allocator_failed_computation:
