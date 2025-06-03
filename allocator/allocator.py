@@ -1,73 +1,113 @@
+\
 # portfolio_optimizer/allocator/allocator.py
-
 from abc import ABC, abstractmethod
+from typing import Dict, Optional, Type, Any, Set, TypeVar
 from datetime import date
-from typing import Set, Dict, Optional, Type, Any # Added Any for save_state return
-
 import tkinter as tk
+
+# Type alias for the state dictionary
+AllocatorState = Dict[str, Any]
+
+# Forward declaration for PAL type hint if needed, or define directly
+# PAL = TypeVar('PAL', bound='PortfolioAllocator') # For generic programming
+# For simplicity, we can use 'PortfolioAllocator' directly or define PAL after class.
 
 class PortfolioAllocator(ABC):
     """
-    Abstract Base Class for portfolio allocation strategies.
-    Instances are typically created/reconfigured via the `configure_or_create` classmethod.
+    Abstract base class for all portfolio allocators.
+    Defines the interface for creating, configuring, and using allocators
+    based on a state-driven, more functional approach.
     """
-    def __init__(self, name: str):
-        self.name: str = name
-        self._allocations: Dict[str, float] = {} # Should always be 0.0-1.0 scale
 
-    @property
-    def allocations(self) -> Dict[str, float]:
-        """Returns a copy of the current portfolio allocations (0.0-1.0 scale)."""
-        return self._allocations.copy()
+    def __init__(self, **state: AllocatorState):
+        """
+        Initializes the allocator instance from a given state dictionary.
+        The state dictionary is expected to contain all necessary parameters
+        for the allocator's operation.
+
+        A mandatory key in the state is 'name'.
+        """
+        if 'name' not in state or not str(state['name']).strip():
+            raise ValueError("Allocator state must include a non-empty 'name'.")
+        self._state: AllocatorState = state # Store the provided state
+
+    def get_name(self) -> str:
+        """
+        Returns the name of the allocator from its state.
+        This method is not intended to be overridden by subclasses.
+        """
+        return str(self._state['name'])
 
     @abstractmethod
-    def on_instruments_changed(self, new_instrument_set: Set[str]) -> None:
+    def get_state(self) -> AllocatorState:
         """
-        Called when the set of instruments in the main portfolio changes.
-        The allocator should adjust its internal state for the current instance.
+        Returns the current state of the allocator as a dictionary.
+        This state should be sufficient to recreate an equivalent allocator.
+        Typically, this will return self._state or a copy.
         """
         pass
 
     @classmethod
     @abstractmethod
-    def configure_or_create(cls: Type['PAL'],
-                            parent_window: tk.Misc,
-                            current_instruments: Set[str],
-                            existing_allocator: Optional['PortfolioAllocator'] = None,
-                           ) -> Optional['PAL']:
+    def configure(
+        cls: Type['PAL'], # PAL defined after class
+        parent_window: tk.Misc,
+        existing_state: Optional[AllocatorState] = None
+    ) -> Optional[AllocatorState]:
         """
-        Opens a configuration dialog to create/reconfigure an allocator instance.
+        Opens a configuration dialog for the allocator.
+        If 'existing_state' is provided, the dialog is pre-filled/initialized
+        with values from this state. If 'existing_state' is None, it assumes
+        creation of a new allocator configuration.
+
+        The dialog should allow configuration of all relevant parameters,
+        including the allocator's name and its specific set of instruments.
+
+        Args:
+            parent_window: The parent tkinter window for the dialog.
+            existing_state: Optional. The current state of an existing allocator
+                            to be configured, or None for a new allocator.
+
+        Returns:
+            A new AllocatorState dictionary if configuration is completed and
+            valid. This new state includes all parameters (name, instruments, etc.).
+            Returns None if the configuration is cancelled or deemed invalid by the dialog.
+            The returned state dictionary *must* include a 'name' key with a non-empty string value.
         """
         pass
 
     @abstractmethod
     def compute_allocations(self, fitting_start_date: date, fitting_end_date: date) -> Dict[str, float]:
         """
-        Computes and returns portfolio allocations, also storing them in self._allocations.
-        """
-        pass
-
-    @abstractmethod
-    def save_state(self) -> Dict[str, Any]:
-        """
-        Serializes the allocator's configuration into a dictionary.
-        This dictionary should contain all necessary parameters to recreate
-        the allocator's specific state, excluding the name (which is handled by App).
-        """
-        pass
-
-    @abstractmethod
-    def load_state(self, config_params: Dict[str, Any], current_instruments: Set[str]) -> None:
-        """
-        Restores the allocator's state from a dictionary of configuration parameters.
-        This method is called after the allocator instance is created with its name.
+        Computes the portfolio allocations based on the allocator's current state
+        and the given fitting period.
 
         Args:
-            config_params: The dictionary of parameters from save_state.
-            current_instruments: The set of instruments currently active in the app,
-                                 which the allocator might need to reconcile with its loaded state.
+            fitting_start_date: The start date for the data used in fitting/computation.
+            fitting_end_date: The end date for the data used in fitting/computation.
+
+        Returns:
+            A dictionary where keys are instrument tickers (str) and values are their
+            corresponding percentage allocations (float, e.g., 0.5 for 50%).
+            Returns an empty dictionary or allocations summing to zero if computation
+            is not possible, results in no holdings, or if no instruments are defined.
         """
         pass
 
-from typing import TypeVar
-PAL = TypeVar('PAL', bound='PortfolioAllocator')
+    # Convenience helper method to access instruments from the state.
+    # Subclasses might have instruments stored differently or might not need this.
+    def get_instruments(self) -> Set[str]:
+        """
+        Helper method to retrieve the set of instruments from the allocator's state.
+        Assumes instruments are stored under the key 'instruments' as a set or list.
+        Returns an empty set if 'instruments' key is not found or is not a collection.
+        """
+        instruments_data = self._state.get('instruments')
+        if isinstance(instruments_data, set):
+            return instruments_data
+        elif isinstance(instruments_data, (list, tuple)): # Allow list/tuple from JSON
+            return set(instruments_data)
+        return set() # Default to empty set
+
+# Type alias for PortfolioAllocator class itself, for cleaner type hints in @classmethod
+PAL = PortfolioAllocator

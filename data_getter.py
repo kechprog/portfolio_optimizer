@@ -146,8 +146,7 @@ def _create_fetcher() -> Callable[[Set[str], pd.Timestamp, pd.Timestamp], Tuple[
     load_dotenv()
 
     cache: Dict[str, pd.DataFrame] = {} # Stores full, validated dataframes from API
-    # key = os.getenv("ALPHA_KEY")
-    key = "GW7UT97X1WGGEYP7"
+    key = os.getenv("ALPHA_KEY")
 
     col_map = {
         "open": "Open",
