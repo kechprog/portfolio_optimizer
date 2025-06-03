@@ -19,6 +19,7 @@ from typing import Optional, Set, Dict, Type, Any, List, Tuple
 from allocator.allocator import PortfolioAllocator, AllocatorState
 from allocator.manual import ManualAllocator
 from allocator.markovits import MarkovitsAllocator
+from portfolio import Portfolio # Added import
 
 from data_getter import av_fetcher # Changed to import av_fetcher directly
 
@@ -323,14 +324,35 @@ class App:
         for aid, data in self.allocators_store.items():
             if data['is_enabled_var'].get():
                 allocator = data['instance']
+                allocator._last_computed_portfolio = None # Clear previous
                 try:
-                    computed_allocs = allocator.compute_allocations(fitting_start_dt, fitting_end_dt)
-                    if computed_allocs is None: 
-                        logger.warning(f"Allocator {allocator.get_name()} returned None from compute_allocations.")
+                    # compute_allocations now returns a Portfolio object
+                    computed_portfolio = allocator.compute_allocations(fitting_start_dt, fitting_end_dt)
+                    
+                    if not isinstance(computed_portfolio, Portfolio):
+                        logger.error(f"Allocator {allocator.get_name()} did not return a Portfolio object. Type: {type(computed_portfolio)}")
                         any_allocator_failed_computation = True; continue
-                    enabled_allocators_data.append({'instance': allocator, 'computed_allocations': computed_allocs})
+                    allocator._last_computed_portfolio = computed_portfolio # Store for display
+
+                    # Determine the allocations to use for the out-of-sample plot period.
+                    # These are the allocations active at fitting_end_dt (which is plot_start_dt)
+                    segments_at_fitting_end = computed_portfolio.get(fitting_end_dt)
+                    allocations_for_plot = None
+                    if segments_at_fitting_end:
+                        # Use allocations from the last segment active at or before fitting_end_dt
+                        allocations_for_plot = segments_at_fitting_end[-1]['allocations']
+                    else:
+                        # No segments by fitting_end_dt means no defined strategy for the plot period
+                        logger.info(f"Allocator {allocator.get_name()} has no allocation segments defined by fitting_end_dt ({fitting_end_dt}).")
+                        allocations_for_plot = {} # Empty dict if no strategy
+
+                    enabled_allocators_data.append({
+                        'instance': allocator, 
+                        'allocations_for_plot': allocations_for_plot # This is a Dict[str, float]
+                        # 'computed_portfolio': computed_portfolio # Could also store this if needed later here
+                    })
                 except Exception as e:
-                    msg = f"Error computing allocations for {allocator.get_name()}: {e}"; logger.error(msg)
+                    msg = f"Error computing allocations for {allocator.get_name()}: {e}"; logger.error(msg, exc_info=True)
                     self.set_status(msg, error=True);
                     any_allocator_failed_computation = True
         
@@ -343,8 +365,9 @@ class App:
 
         all_instruments_for_plot_data = set()
         for alloc_data in enabled_allocators_data:
-            for ticker, weight in alloc_data['computed_allocations'].items():
-                if abs(weight) > 1e-9:
+            # 'allocations_for_plot' is the Dict[str, float] to be used
+            for ticker, weight in alloc_data['allocations_for_plot'].items():
+                if abs(weight) > 1e-9: # Only consider instruments with non-negligible weight
                     all_instruments_for_plot_data.add(ticker)
         
         historical_prices_for_plot, problematic_tickers_fetch = self._fetch_plot_data(
@@ -364,8 +387,13 @@ class App:
         num_series_plotted = 0
         for alloc_data in enabled_allocators_data:
             allocator = alloc_data['instance']
-            current_allocs = alloc_data['computed_allocations']
+            # current_allocs is the Dict[str, float] derived for the plot period
+            current_allocs = alloc_data['allocations_for_plot'] 
             
+            if not current_allocs: # If allocations_for_plot ended up being empty
+                logger.info(f"Allocator {allocator.get_name()} has no effective allocations for plotting period. Skipping plot for this allocator.")
+                self.ax.plot([], [], label=f"{allocator.get_name()} (No allocations for plot)"); num_series_plotted+=1; continue
+
             instruments_to_plot_for_this_alloc = {
                 inst for inst, weight in current_allocs.items() 
                 if abs(weight) > 1e-9 and inst in historical_prices_for_plot.columns and not historical_prices_for_plot[inst].isnull().all()
@@ -653,26 +681,46 @@ class App:
             allocator = found_allocator_data['instance']
             is_enabled = found_allocator_data['is_enabled_var'].get()
             
-            allocs = getattr(allocator, '_allocations', {})
-
             status_text = "ENABLED" if is_enabled else "DISABLED"
             display_text = f"Allocator: '{allocator.get_name()}' ({status_text})\nType: {type(allocator).__name__}\n"
             display_text += f"Instruments: {', '.join(sorted(list(allocator.get_instruments()))) if allocator.get_instruments() else 'None'}\n"
             
             if isinstance(allocator, MarkovitsAllocator):
-                display_text += f"Optimization: {allocator.optimization_target}\n"
-                display_text += f"Allows Shorting: {allocator._allow_shorting}\n"
-                display_text += f"Use Adjusted Close: {allocator._use_adj_close}\n"
-            
-            if allocs: 
-                alloc_sum = sum(allocs.values())
-                display_text += "\nLast Computed Allocations (after Fit & Plot):\n" + "\n".join([f"  {inst}: {percent:.2%}" for inst, percent in sorted(allocs.items()) if abs(percent)>1e-9])
-                if not (abs(alloc_sum - 1.0) < 1e-7 or (not any(abs(v)>1e-9 for v in allocs.values()) and abs(alloc_sum) < 1e-9)):
-                    display_text += f"\n\nWARNING: Allocations sum to {alloc_sum*100:.2f}%."
-                elif not any(abs(v)>1e-9 for v in allocs.values()): 
-                    display_text += "\n(All allocations are zero)"
+                # Ensure attribute names match the MarkovitsAllocator class definition
+                display_text += f"Optimization Target: {getattr(allocator, 'optimization_target', 'N/A')}\n"
+                display_text += f"Allows Shorting: {getattr(allocator, '_allow_shorting', 'N/A')}\n"
+                display_text += f"Use Adjusted Close: {getattr(allocator, '_use_adj_close', 'N/A')}\n"
+            # Add other allocator-specific details here if needed using getattr for safety
+
+            computed_portfolio: Optional[Portfolio] = getattr(allocator, '_last_computed_portfolio', None)
+
+            if computed_portfolio and computed_portfolio.segments:
+                # Display info from the first segment as a representation
+                first_segment = computed_portfolio.segments[0]
+                segment_allocs = first_segment['allocations']
+                segment_start = first_segment['start_date']
+                segment_end = first_segment['end_date']
+                
+                display_text += f"\nComputed Portfolio (Segment 1 of {len(computed_portfolio.segments)}):\n"
+                display_text += f"  Segment Period: {segment_start.strftime('%Y-%m-%d')} to {segment_end.strftime('%Y-%m-%d')}\n"
+                
+                if segment_allocs:
+                    alloc_sum = sum(segment_allocs.values())
+                    display_text += "  Allocations:\n" + "\n".join([
+                        f"    {inst}: {percent:.2%}" for inst, percent in sorted(segment_allocs.items()) if abs(percent) > 1e-9
+                    ])
+                    if not (abs(alloc_sum - 1.0) < 1e-7 or (not any(abs(v) > 1e-9 for v in segment_allocs.values()) and abs(alloc_sum) < 1e-9)):
+                        display_text += f"\n\n  WARNING: Segment allocations sum to {alloc_sum*100:.2f}%."
+                    elif not any(abs(v) > 1e-9 for v in segment_allocs.values()):
+                        display_text += "\n  (All allocations in segment are zero)"
+                else:
+                    display_text += "  No allocations in this segment."
+                
+                if len(computed_portfolio.segments) > 1:
+                    display_text += "\n  (Note: This allocator produced multiple portfolio segments. Details above are for the first segment.)"
+
             else: 
-                display_text += "\nNo allocations computed yet or available."
+                display_text += "\nNo portfolio segments computed yet or available from last 'FIT & PLOT'."
                 if is_enabled : display_text += "\nRun 'FIT & PLOT' to compute."
         elif not self.allocators_store:
             display_text = "No allocators created yet."
