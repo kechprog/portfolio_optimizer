@@ -204,50 +204,12 @@ class ManualAllocator(PortfolioAllocator):
         logger.info(f"ManualAllocator configuration/creation cancelled for '{initial_name}'.")
         return None
 
-<<<<<<< HEAD
-    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date) -> Portfolio:
-        """
-        Computes allocations and returns them within a Portfolio object.
-        For ManualAllocator, this involves creating a single segment in the portfolio
-        that spans the fitting_start_date to fitting_end_date with the stored manual allocations.
-        """
+    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date) -> Dict[str, float]:
         current_instruments = self.get_instruments()
         # Use the internally stored allocations
         manual_allocs: Dict[str, float] = {
             inst: self._allocations.get(inst, 0.0) for inst in current_instruments
         }
-        
-        # Create a Portfolio object starting from fitting_start_date
-        # The Portfolio object itself uses fitting_start_date as its inception.
-        # The segment then defines the period for these specific allocations.
-        portfolio = Portfolio(start_date=fitting_start_date)
-        
-        # Add a single segment with these allocations spanning the full period
-        # The segment's start date within the portfolio is implicitly fitting_start_date (handled by Portfolio.append)
-        # The segment's end date is fitting_end_date
-        if fitting_end_date > fitting_start_date:
-            portfolio.append(end_date=fitting_end_date, allocations=manual_allocs)
-            logger.info(f"({self.get_name()}): Created Portfolio segment from {fitting_start_date} to {fitting_end_date} with allocations: {manual_allocs}")
-        else:
-            # If dates are not valid for a segment, return an empty portfolio (no segments)
-            logger.warning(f"({self.get_name()}): fitting_end_date ({fitting_end_date}) is not after fitting_start_date ({fitting_start_date}). Returning empty portfolio.")
-            # The portfolio object is already initialized but will contain no segments.
-
-        current_sum = sum(manual_allocs.values())
-        if manual_allocs and abs(current_sum - 1.0) > 1e-7:
-             logger.warning(f"({self.get_name()}): Allocations for the segment sum to {current_sum:.2f}%, not 100%. This might be as configured.")
-        
-        return portfolio
-
-<<<<<<< HEAD
-=======
-=======
-    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date) -> Dict[str, float]:
-        current_instruments = self.get_instruments()
-        computed_allocs: Dict[str, float] = {
-            inst: self._allocations.get(inst, 0.0) for inst in current_instruments
-        }
->>>>>>> 3d44c10 (cleanup and better ui)
         current_sum = sum(computed_allocs.values())
         if computed_allocs and abs(current_sum - 1.0) > 1e-7:
              logger.warning(f"({self.get_name()}): Allocations sum to {current_sum:.2f}%, not 100%. This might be as configured.")
