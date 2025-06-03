@@ -12,6 +12,7 @@ import pandas as pd
 import uuid
 import json
 import os
+import logging # Added logging
 from typing import Optional, Set, Dict, Type, Any, List, Tuple
 
 # Import the new AllocatorState along with PortfolioAllocator
@@ -19,9 +20,10 @@ from allocator.allocator import PortfolioAllocator, AllocatorState
 from allocator.manual import ManualAllocator
 from allocator.markovits import MarkovitsAllocator
 
-from config import get_fetcher
-Fetcher = get_fetcher()
+from data_getter import av_fetcher # Changed to import av_fetcher directly
 
+# Setup logger for this module
+logger = logging.getLogger(__name__)
 
 GEAR_ICON = "\u2699"
 DELETE_ICON = "\u2716"
@@ -324,11 +326,11 @@ class App:
                 try:
                     computed_allocs = allocator.compute_allocations(fitting_start_dt, fitting_end_dt)
                     if computed_allocs is None: 
-                        print(f"Warning: Allocator {allocator.get_name()} returned None from compute_allocations.")
+                        logger.warning(f"Allocator {allocator.get_name()} returned None from compute_allocations.")
                         any_allocator_failed_computation = True; continue
                     enabled_allocators_data.append({'instance': allocator, 'computed_allocations': computed_allocs})
                 except Exception as e:
-                    msg = f"Error computing allocations for {allocator.get_name()}: {e}"; print(msg)
+                    msg = f"Error computing allocations for {allocator.get_name()}: {e}"; logger.error(msg)
                     self.set_status(msg, error=True);
                     any_allocator_failed_computation = True
         
@@ -383,7 +385,7 @@ class App:
             relevant_daily_returns.dropna(how='all', inplace=True)
 
             if relevant_daily_returns.empty:
-                print(f"INFO ({allocator.get_name()}): No daily returns available in the plotting period starting {plot_start_dt}.")
+                logger.info(f"({allocator.get_name()}): No daily returns available in the plotting period starting {plot_start_dt}.")
                 self.ax.plot([], [], label=f"{allocator.get_name()} (No returns in plot period)"); num_series_plotted+=1; continue
 
             alloc_series_data = {
@@ -433,27 +435,38 @@ class App:
         if not instruments:
             return pd.DataFrame(), set()
 
+
         fetch_start_dt = plot_start_dt - timedelta(days=7)
-        fetched_df, initially_problematic_tickers = Fetcher.fetch(
-            list(instruments), fetch_start_dt, plot_end_dt,
-            include_dividends=include_dividends, interval="1d"
+        # Alpha Vantage expects uppercase tickers. `instruments` here are original case from user input or state.
+        instruments_upper_for_fetch = {ticker.upper() for ticker in instruments}
+        
+        fetched_df, initially_problematic_tickers_upper = av_fetcher(
+            instruments_upper_for_fetch, 
+            pd.to_datetime(fetch_start_dt), 
+            pd.to_datetime(plot_end_dt)
+            # include_dividends and interval are not part of av_fetcher signature
+            # av_fetcher returns daily adjusted data by default.
         )
-        current_problematic_tickers = set(initially_problematic_tickers)
+        # Map problematic uppercase tickers back to original case if possible, though `instruments` set is the source of truth.
+        # For simplicity, we'll rely on the fact that subsequent processing uses original case from `instruments`.
+        current_problematic_tickers = {ticker for ticker in instruments 
+                                       if ticker.upper() in initially_problematic_tickers_upper}
+        current_problematic_tickers.update({ticker_upper for ticker_upper in initially_problematic_tickers_upper 
+                                            if ticker_upper not in [t.upper() for t in instruments]}) # Add any truly unknown/problematic uppercase tickers
 
         if fetched_df.empty:
-            current_problematic_tickers.update(instruments)
             return pd.DataFrame(), current_problematic_tickers
 
         field_name = 'AdjClose' if include_dividends else 'Close'
         
         if not (isinstance(fetched_df.columns, pd.MultiIndex) and 'Field' in fetched_df.columns.names):
-            print(f"WARNING: Fetched DataFrame for {instruments} does not have expected MultiIndex ('Field', 'Ticker').")
+            logger.warning(f"Fetched DataFrame for {instruments} does not have expected MultiIndex ('Field', 'Ticker').")
             current_problematic_tickers.update(instruments)
             return pd.DataFrame(), current_problematic_tickers
             
         available_fields = fetched_df.columns.get_level_values('Field').unique().tolist()
         if field_name not in available_fields:
-            print(f"WARNING: Required field '{field_name}' not in {available_fields} for {instruments}.")
+            logger.warning(f"Required field '{field_name}' not in {available_fields} for {instruments}.")
             current_problematic_tickers.update(instruments)
             return pd.DataFrame(), current_problematic_tickers
             
@@ -475,11 +488,11 @@ class App:
             processed_df = fetched_df[actual_cols_to_select].xs(key=field_name, level='Field', axis=1, drop_level=True)
         
         except KeyError as e:
-            print(f"ERROR: KeyError during .xs for '{field_name}': {e}.")
+            logger.error(f"KeyError during .xs for '{field_name}': {e}.")
             current_problematic_tickers.update(instruments)
             return pd.DataFrame(), current_problematic_tickers
         except Exception as e:
-            print(f"ERROR: Unexpected error extracting field '{field_name}': {e}.")
+            logger.error(f"Unexpected error extracting field '{field_name}': {e}.")
             current_problematic_tickers.update(instruments)
             return pd.DataFrame(), current_problematic_tickers
 
@@ -518,7 +531,7 @@ class App:
                     allocator_type_name = type_name_key; break
             
             if not allocator_type_name:
-                print(f"Warning: Type for allocator '{instance.get_name()}' not found. Skipping."); continue
+                logger.warning(f"Type for allocator '{instance.get_name()}' not found. Skipping save of this allocator."); continue
 
             allocator_state_to_save = instance.get_state()
             state["allocators"].append({
@@ -568,11 +581,11 @@ class App:
                 allocator_type_name = saved_alloc_data.get("type_name")
                 AllocatorClass = self.available_allocator_types.get(allocator_type_name)
                 if not AllocatorClass: 
-                    print(f"Warning: Unknown allocator type '{allocator_type_name}'. Skipping."); continue
+                    logger.warning(f"Unknown allocator type '{allocator_type_name}' in saved state. Skipping."); continue
                 
                 allocator_state_from_save = saved_alloc_data.get("allocator_state")
                 if not allocator_state_from_save or not isinstance(allocator_state_from_save, dict):
-                    print(f"Warning: Missing/invalid 'allocator_state' for type '{allocator_type_name}'. Skipping.")
+                    logger.warning(f"Missing/invalid 'allocator_state' for type '{allocator_type_name}' in saved state. Skipping.")
                     continue
                 
                 if 'name' not in allocator_state_from_save: # Should be guaranteed by save, but good check
@@ -587,7 +600,7 @@ class App:
                     new_instance = AllocatorClass(**allocator_state_from_save)
                 except Exception as e: 
                     loaded_name = allocator_state_from_save.get('name', 'unknown allocator')
-                    print(f"ERROR: Failed to initialize allocator '{loaded_name}': {e}"); 
+                    logger.error(f"Failed to initialize allocator '{loaded_name}' from saved state: {e}", exc_info=True); 
                     self.set_status(f"Error loading {loaded_name}: {e}", error=True)
                     continue
                 
@@ -608,8 +621,8 @@ class App:
             return True
             
         except Exception as e:
-            self.set_status(f"Critical error processing loaded state: {e}", error=True); 
-            import traceback; traceback.print_exc()
+            self.set_status(f"Critical error processing loaded state: {e}", error=True);
+            logger.exception("Critical error processing loaded state. Resetting application.")
             messagebox.showerror("Load Error", f"Critical error processing state: {e}\nStarting fresh.", parent=self.root)
             self.allocators_store.clear()
             self._redraw_allocator_list_ui()
@@ -709,18 +722,19 @@ class App:
                     with open(SAVE_STATE_FILENAME, 'r') as f:
                         existing_state = json.load(f)
                 except (IOError, json.JSONDecodeError) as e:
-                    print(f"Warning: Could not load existing state on close to save geometry: {e}")
+                    logger.warning(f"Could not load existing state on close to save geometry: {e}")
             
             existing_state["window_geometry"] = self.root.geometry()
             
             with open(SAVE_STATE_FILENAME, 'w') as f:
                 json.dump(existing_state, f, indent=4, default=lambda o: list(o) if isinstance(o, set) else o)
         except Exception as e:
-            print(f"Error saving window geometry on close: {e}")
+            logger.error(f"Error saving window geometry on close: {e}", exc_info=True)
         finally:
             self.root.destroy()
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s') # Basic logging config
     multiprocessing.freeze_support() 
     root = tk.Tk()
     style = ttk.Style()

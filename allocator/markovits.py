@@ -1,6 +1,6 @@
 # portfolio_optimizer/allocator/markovits.py
-
-from typing import Set, Dict, Optional, Type, Any, List # Added List
+import logging
+from typing import Set, Dict, Optional, Type, Any, List
 from datetime import date
 import pandas as pd
 from pypfopt import EfficientFrontier
@@ -11,8 +11,9 @@ from tkinter import ttk, simpledialog, messagebox
 import uuid
 
 from .allocator import PortfolioAllocator, AllocatorState, PAL 
-from config import get_fetcher
-Fetcher = get_fetcher()
+from data_getter import av_fetcher
+
+logger = logging.getLogger(__name__)
 
 class MarkovitsAllocator(PortfolioAllocator):
     OPTIMIZATION_TARGETS = {
@@ -21,19 +22,17 @@ class MarkovitsAllocator(PortfolioAllocator):
         # Future: "Efficient Return": "efficient_return",
         # Future: "Efficient Risk": "efficient_risk",
     }
-    DEFAULT_OPTIMIZATION_TARGET_KEY = "Maximize Sharpe Ratio" # User-facing key
+    DEFAULT_OPTIMIZATION_TARGET_KEY = "Maximize Sharpe Ratio"
     DEFAULT_OPTIMIZATION_TARGET_INTERNAL = OPTIMIZATION_TARGETS[DEFAULT_OPTIMIZATION_TARGET_KEY]
 
     def __init__(self, **state: AllocatorState):
         super().__init__(**state)
         
-        # Internal attributes are derived from the state passed to super().__init__
-        # which stores it in self._state.
         self._allow_shorting: bool = bool(self._state.get('allow_shorting', False))
         
         raw_opt_target = str(self._state.get('optimization_target', self.DEFAULT_OPTIMIZATION_TARGET_INTERNAL))
         if raw_opt_target not in self.OPTIMIZATION_TARGETS.values():
-            print(f"Warning ({self.get_name()}): Invalid optimization_target '{raw_opt_target}' in state. Defaulting to {self.DEFAULT_OPTIMIZATION_TARGET_INTERNAL}.")
+            logger.warning(f"({self.get_name()}): Invalid optimization_target '{raw_opt_target}' in state. Defaulting to {self.DEFAULT_OPTIMIZATION_TARGET_INTERNAL}.")
             self.optimization_target: str = self.DEFAULT_OPTIMIZATION_TARGET_INTERNAL
         else:
             self.optimization_target: str = raw_opt_target
@@ -43,7 +42,7 @@ class MarkovitsAllocator(PortfolioAllocator):
             try:
                 self.target_return_value = float(self.target_return_value)
             except (ValueError, TypeError):
-                print(f"Warning ({self.get_name()}): Invalid target_return_value '{self.target_return_value}'. Setting to None.")
+                logger.warning(f"({self.get_name()}): Invalid target_return_value '{self.target_return_value}'. Setting to None.")
                 self.target_return_value = None
         
         self._use_adj_close: bool = bool(self._state.get('use_adj_close', True)) # Default to True
@@ -74,10 +73,10 @@ class MarkovitsAllocator(PortfolioAllocator):
         self._allocations = {instrument: 0.0 for instrument in current_instruments}
 
         if not current_instruments:
-            print(f"WARNING ({self.get_name()}): No instruments defined. Cannot compute allocations.")
+            logger.warning(f"({self.get_name()}): No instruments defined. Cannot compute allocations.")
             return self._allocations.copy()
 
-        print(f"INFO ({self.get_name()}): Computing allocations for {current_instruments} from {fitting_start_date} to {fitting_end_date}. AdjClose: {self._use_adj_close}")
+        logger.info(f"({self.get_name()}): Computing allocations for {current_instruments} from {fitting_start_date} to {fitting_end_date}. AdjClose: {self._use_adj_close}")
         
         requested_instruments_upper = {t.upper() for t in current_instruments}
         upper_to_original_ticker_map = {t.upper(): t for t in current_instruments}
@@ -85,25 +84,27 @@ class MarkovitsAllocator(PortfolioAllocator):
         try:
             # For Markovits, dividends are often important, so include_dividends=True is common.
             # The self._use_adj_close flag will determine which column ('AdjClose' or 'Close') is chosen later.
-            raw_data_df, flawed_tickers_from_fetcher_upper = Fetcher.fetch(
-                list(requested_instruments_upper),
-                fitting_start_date,
-                fitting_end_date,
-                interval="1d",
-                include_dividends=True # Fetch comprehensive data; selection of Close/AdjClose happens next
+            # av_fetcher expects uppercase tickers (which requested_instruments_upper is)
+            # and pd.Timestamp for dates.
+            raw_data_df, flawed_tickers_from_fetcher_upper = av_fetcher(
+                requested_instruments_upper, # Already a set of uppercase strings
+                pd.to_datetime(fitting_start_date),
+                pd.to_datetime(fitting_end_date)
+                # interval and include_dividends are not part of av_fetcher signature
+                # av_fetcher returns daily adjusted data by default.
             )
         except Exception as e:
-            print(f"ERROR ({self.get_name()}): Data fetching call failed: {e}")
+            logger.error(f"({self.get_name()}): Data fetching call failed: {e}", exc_info=True)
             return self._allocations.copy()
 
         if raw_data_df.empty:
-            print(f"WARNING ({self.get_name()}): No data returned from fetcher for {current_instruments}. Flawed tickers reported: {flawed_tickers_from_fetcher_upper}")
+            logger.warning(f"({self.get_name()}): No data returned from fetcher for {current_instruments}. Flawed tickers reported: {flawed_tickers_from_fetcher_upper}")
             return self._allocations.copy()
 
         valid_instruments_upper = requested_instruments_upper - set(flawed_tickers_from_fetcher_upper)
         
         if not valid_instruments_upper:
-            print(f"WARNING ({self.get_name()}): No valid instruments after fetcher processing. Flawed: {flawed_tickers_from_fetcher_upper}")
+            logger.warning(f"({self.get_name()}): No valid instruments after fetcher processing. Flawed: {flawed_tickers_from_fetcher_upper}")
             return self._allocations.copy()
 
         prices_df_list = []
@@ -119,18 +120,18 @@ class MarkovitsAllocator(PortfolioAllocator):
                 price_series = raw_data_df[(data_field_to_use, ticker_upper)]
             elif (fallback_field, ticker_upper) in raw_data_df.columns: # Try fallback
                 price_series = raw_data_df[(fallback_field, ticker_upper)]
-                print(f"INFO ({self.get_name()}): Using fallback field '{fallback_field}' for {original_ticker} ({ticker_upper}) as primary '{data_field_to_use}' not found.")
+                logger.info(f"({self.get_name()}): Using fallback field '{fallback_field}' for {original_ticker} ({ticker_upper}) as primary '{data_field_to_use}' not found.")
             else:
-                print(f"WARNING ({self.get_name()}): Price data for {original_ticker} ({ticker_upper}) (field: {data_field_to_use}) not in fetched columns. Skipping.")
+                logger.warning(f"({self.get_name()}): Price data for {original_ticker} ({ticker_upper}) (field: {data_field_to_use}) not in fetched columns. Skipping.")
                 continue
 
             if price_series is not None and not price_series.dropna().empty:
                 prices_df_list.append(price_series.dropna().rename(original_ticker))
             else:
-                print(f"WARNING ({self.get_name()}): All price data for {original_ticker} ({ticker_upper}) was NaN or series was None. Skipping.")
+                logger.warning(f"({self.get_name()}): All price data for {original_ticker} ({ticker_upper}) was NaN or series was None. Skipping.")
         
         if not prices_df_list:
-            print(f"WARNING ({self.get_name()}): No valid price series found for any instrument after extraction. Cannot compute.")
+            logger.warning(f"({self.get_name()}): No valid price series found for any instrument after extraction. Cannot compute.")
             return self._allocations.copy()
             
         prices = pd.concat(prices_df_list, axis=1).sort_index()
@@ -141,20 +142,20 @@ class MarkovitsAllocator(PortfolioAllocator):
             if pd.notna(common_start) and pd.notna(common_end) and common_start < common_end:
                 prices = prices.loc[common_start:common_end]
             else:
-                print(f"WARNING ({self.get_name()}): Could not determine common date range. Start: {common_start}, End: {common_end}. Using available data.")
+                logger.warning(f"({self.get_name()}): Could not determine common date range. Start: {common_start}, End: {common_end}. Using available data.")
         
         prices = prices.ffill().bfill()
         prices.dropna(axis=1, how='all', inplace=True) 
 
         if prices.empty or prices.shape[0] < 2 or prices.shape[1] == 0 :
-            print(f"WARNING ({self.get_name()}): Not enough historical data points or instruments ({prices.shape}) after processing. Cannot compute.")
+            logger.warning(f"({self.get_name()}): Not enough historical data points ({prices.shape[0]}) or instruments ({prices.shape[1]}) after processing. Cannot compute.")
             return self._allocations.copy()
 
         try:
             mu = expected_returns.mean_historical_return(prices, compounding=True, frequency=252)
             S = risk_models.CovarianceShrinkage(prices, frequency=252).ledoit_wolf()
         except Exception as e:
-            print(f"ERROR ({self.get_name()}): Could not calculate mu/S: {e}. Prices Columns: {prices.columns}")
+            logger.error(f"({self.get_name()}): Could not calculate mu/S: {e}. Prices Columns: {prices.columns}", exc_info=True)
             return self._allocations.copy()
 
         weight_bounds = (-1.0 if self._allow_shorting else 0.0, 1.0)
@@ -169,7 +170,7 @@ class MarkovitsAllocator(PortfolioAllocator):
             # elif self.optimization_target == "efficient_return" and self.target_return_value is not None:
             #     ef.efficient_return(self.target_return_value)
             else: 
-                print(f"WARNING ({self.get_name()}): Unknown or misconfigured optimization target '{self.optimization_target}'. Defaulting to max_sharpe.")
+                logger.warning(f"({self.get_name()}): Unknown or misconfigured optimization target '{self.optimization_target}'. Defaulting to max_sharpe.")
                 ef.max_sharpe()
             
             cleaned_weights = ef.clean_weights()
@@ -177,16 +178,17 @@ class MarkovitsAllocator(PortfolioAllocator):
                 if ticker in self._allocations: 
                     self._allocations[ticker] = weight
                 else:
-                    print(f"WARNING ({self.get_name()}): Ticker {ticker} from optimization results not in original instrument list. This is unexpected.")
+                    # This case should ideally not happen if prices DataFrame is correctly formed with original ticker names
+                    logger.warning(f"({self.get_name()}): Ticker '{ticker}' from optimization results not in the pre-initialized allocation keys. This might indicate an issue mapping back to original tickers. Allocations available for: {list(self._allocations.keys())}")
 
-            print(f"INFO ({self.get_name()}): Computed allocations: {self._allocations}")
+            logger.info(f"({self.get_name()}): Computed allocations: {self._allocations}")
             return self._allocations.copy()
 
         except ValueError as ve:
-             print(f"ERROR ({self.get_name()}): Optimization failed for '{self.optimization_target}': {ve}")
+             logger.error(f"({self.get_name()}): Optimization failed for '{self.optimization_target}': {ve}", exc_info=True)
              return self._allocations.copy()
         except Exception as e:
-            print(f"ERROR ({self.get_name()}): Unexpected error during optimization for '{self.optimization_target}': {e}")
+            logger.error(f"({self.get_name()}): Unexpected error during optimization for '{self.optimization_target}': {e}", exc_info=True)
             return self._allocations.copy()
 
     @classmethod
@@ -246,10 +248,10 @@ class MarkovitsAllocator(PortfolioAllocator):
                 messagebox.showerror("Configuration Error", f"Failed to create allocator state: {e}", parent=parent_window)
                 return None
 
-            print(f"INFO: MarkovitsAllocator '{new_state['name']}' configuration resulted in state: {new_state}")
+            logger.info(f"MarkovitsAllocator '{new_state['name']}' configuration resulted in state: {new_state}")
             return new_state
         
-        print(f"INFO: MarkovitsAllocator configuration/creation cancelled for '{initial_name}'.")
+        logger.info(f"MarkovitsAllocator configuration/creation cancelled for '{initial_name}'.")
         return None
 
 
@@ -263,7 +265,11 @@ class MarkovitsConfigDialog(simpledialog.Dialog):
                  available_targets_map: Dict[str,str]): # Display Name -> Internal Value
         
         self.initial_name = initial_name
-        self.initial_instruments_str = initial_instruments_str
+        # Convert comma-separated string to a list of strings for instruments
+        if initial_instruments_str:
+            self.initial_instruments_list = [s.strip() for s in initial_instruments_str.split(',') if s.strip()]
+        else:
+            self.initial_instruments_list = []
         self.initial_allow_shorting = initial_allow_shorting
         self.initial_use_adj_close = initial_use_adj_close
         self.initial_optimization_target_key = initial_optimization_target_key
@@ -272,10 +278,13 @@ class MarkovitsConfigDialog(simpledialog.Dialog):
 
         # --- Tkinter Variables --- 
         self.name_var = tk.StringVar(value=self.initial_name)
-        self.instruments_text_var = tk.StringVar(value=self.initial_instruments_str)
+        # self.instruments_text_var is removed, instruments handled by self.instrument_rows_data
         self.allow_shorting_var = tk.BooleanVar(value=self.initial_allow_shorting)
         self.use_adj_close_var = tk.BooleanVar(value=self.initial_use_adj_close)
         self.optimization_target_var = tk.StringVar(value=self.initial_optimization_target_key)
+        
+        self.instrument_rows_data: List[Dict[str, Any]] = [] # Stores dicts like {'frame': ..., 'name_var': ..., 'entry': ..., 'button': ...}
+
 
         # --- Results --- (populated upon successful validation)
         self.result_is_ok: bool = False # Flag to indicate successful dialog completion
@@ -290,46 +299,89 @@ class MarkovitsConfigDialog(simpledialog.Dialog):
     def body(self, master_frame: tk.Frame) -> tk.Entry | None:
         master_frame.pack_configure(padx=10, pady=10, fill="both", expand=True)
 
-        # --- Name ---
-        name_frame = ttk.Frame(master_frame)
-        name_frame.pack(side="top", fill="x", pady=5)
+        # --- Top Options Frame ---
+        top_options_frame = ttk.Frame(master_frame)
+        top_options_frame.pack(side="top", fill="x", pady=(0, 10))
+
+        # Allocator Name
+        name_frame = ttk.Frame(top_options_frame)
+        name_frame.pack(side="top", fill="x", pady=2)
         ttk.Label(name_frame, text="Allocator Name:").pack(side="left", padx=(0,5))
         self.name_entry = ttk.Entry(name_frame, textvariable=self.name_var, width=40)
         self.name_entry.pack(side="left", fill="x", expand=True)
 
-        # --- Instruments ---
-        inst_frame = ttk.LabelFrame(master_frame, text="Instruments (comma-separated)")
-        inst_frame.pack(side="top", fill="x", pady=5)
-        self.instruments_entry = ttk.Entry(inst_frame, textvariable=self.instruments_text_var, width=50)
-        self.instruments_entry.pack(side="left", fill="x", expand=True, padx=5, pady=5)
-        # Optionally, add a small info label about format or examples.
-
-        # --- Options Checkboxes ---
-        options_frame = ttk.Frame(master_frame)
-        options_frame.pack(side="top", fill="x", pady=3)
-        
-        self.shorting_check = ttk.Checkbutton(options_frame, text="Allow Short Selling (-1 to 1 weights)",
-                                         variable=self.allow_shorting_var)
-        self.shorting_check.pack(side="top", fill="x", pady=2, anchor="w")
-
-        self.adj_close_check = ttk.Checkbutton(options_frame, text="Use Adjusted Close Prices (recommended)",
-                                          variable=self.use_adj_close_var)
-        self.adj_close_check.pack(side="top", fill="x", pady=2, anchor="w")
-
-        # --- Optimization Target ---
-        target_frame = ttk.Frame(master_frame)
-        target_frame.pack(side="top", fill="x", pady=5)
+        # Optimization Target
+        target_frame = ttk.Frame(top_options_frame)
+        target_frame.pack(side="top", fill="x", pady=2)
         ttk.Label(target_frame, text="Optimization Target:").pack(side="left", padx=(0,5))
         self.target_combo = ttk.Combobox(target_frame, textvariable=self.optimization_target_var,
                                          values=self.available_target_keys, state="readonly", width=30)
-        # Pre-select from initial_optimization_target_key
         if self.initial_optimization_target_key in self.available_target_keys:
             self.target_combo.set(self.initial_optimization_target_key)
-        elif self.available_target_keys: # Fallback to first if initial is invalid
-             self.target_combo.current(0) 
+        elif self.available_target_keys:
+            self.target_combo.current(0)
         self.target_combo.pack(side="left", fill="x", expand=True)
+
+        # Checkboxes for options
+        options_checks_frame = ttk.Frame(top_options_frame)
+        options_checks_frame.pack(side="top", fill="x", pady=2)
+        self.shorting_check = ttk.Checkbutton(options_checks_frame, text="Allow Short Selling (-1 to 1 weights)",
+                                         variable=self.allow_shorting_var)
+        self.shorting_check.pack(side="top", anchor="w", fill="x")
+        self.adj_close_check = ttk.Checkbutton(options_checks_frame, text="Use Adjusted Close Prices (recommended)",
+                                          variable=self.use_adj_close_var)
+        self.adj_close_check.pack(side="top", anchor="w", fill="x")
+
+        # --- Instruments Area (List + Add Button at its bottom) ---
+        instruments_group_frame = ttk.LabelFrame(master_frame, text="Instruments")
+        instruments_group_frame.pack(side="top", fill="both", expand=True, pady=5)
+
+        self.instrument_list_display_frame = ttk.Frame(instruments_group_frame)
+        self.instrument_list_display_frame.pack(side="top", fill="both", expand=True, padx=5, pady=(5,0))
+
+        # Populate initial instruments
+        for ticker in self.initial_instruments_list:
+            self._add_instrument_row_ui(parent_frame_for_rows=self.instrument_list_display_frame, instrument_name_initial=ticker)
         
-        return self.name_entry # For initial focus by Dialog system
+        # "Add Instrument" Button
+        add_button_internal_frame = ttk.Frame(instruments_group_frame)
+        add_button_internal_frame.pack(side="top", fill="x", pady=(5,5))
+        self.add_instrument_button = ttk.Button(add_button_internal_frame, text="Add New Instrument",
+                                           command=lambda: self._add_instrument_row_ui_event(parent_frame_for_rows=self.instrument_list_display_frame))
+        self.add_instrument_button.pack()
+        
+        return self.name_entry # Initial focus
+
+    def _add_instrument_row_ui_event(self, parent_frame_for_rows):
+        new_entry = self._add_instrument_row_ui(parent_frame_for_rows=parent_frame_for_rows)
+        if new_entry:
+            new_entry.focus_set()
+
+    def _add_instrument_row_ui(self, parent_frame_for_rows: tk.Frame, instrument_name_initial: str = "") -> tk.Entry:
+        row_frame = ttk.Frame(parent_frame_for_rows)
+        row_frame.pack(side="top", fill="x", pady=2)
+
+        name_var = tk.StringVar(value=instrument_name_initial)
+        name_entry = ttk.Entry(row_frame, textvariable=name_var, width=35)
+        name_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+
+        delete_button = ttk.Button(row_frame, text="X", width=3,
+                                   command=lambda rf=row_frame: self._remove_instrument_row_ui(rf))
+        delete_button.pack(side="left", padx=(0,2))
+
+        self.instrument_rows_data.append({'frame': row_frame, 'name_var': name_var, 'entry': name_entry, 'button': delete_button})
+        return name_entry
+
+    def _remove_instrument_row_ui(self, row_frame_to_delete: tk.Frame):
+        row_to_remove = None
+        for i, row_data in enumerate(self.instrument_rows_data):
+            if row_data['frame'] == row_frame_to_delete:
+                row_to_remove = row_data
+                del self.instrument_rows_data[i]
+                break
+        
+        if row_to_remove:
+            row_to_remove['frame'].destroy()
 
     def validate(self) -> bool:
         allocator_name = self.name_var.get().strip()
@@ -338,19 +390,20 @@ class MarkovitsConfigDialog(simpledialog.Dialog):
             self.name_entry.focus_set()
             return False
         
-        instruments_str = self.instruments_text_var.get().strip()
-        if not instruments_str:
+        parsed_instruments_set: Set[str] = set()
+        for row_data in self.instrument_rows_data:
+            instrument_name = row_data['name_var'].get().strip().upper()
+            if instrument_name: # Only add non-empty tickers
+                parsed_instruments_set.add(instrument_name)
+
+        if not parsed_instruments_set: # If set is empty after collecting all names
+             # Check if user wants to proceed with no instruments
             if not messagebox.askyesno("No Instruments", "No instruments specified. Continue with an empty set?", parent=self):
-                self.instruments_entry.focus_set()
+                if self.instrument_rows_data: # If there are rows, focus the last entry
+                    self.instrument_rows_data[-1]['entry'].focus_set()
+                else: # If no rows exist, focus the add button
+                    self.add_instrument_button.focus_set()
                 return False
-            parsed_instruments_set: Set[str] = set()
-        else:
-            parsed_instruments_set = {s.strip().upper() for s in instruments_str.split(',') if s.strip()}
-            if not parsed_instruments_set: # e.g. if input was just commas or whitespace
-                messagebox.showerror("Validation Error", "Instruments field is non-empty but parsing resulted in no valid tickers. Please provide valid, comma-separated tickers.", parent=self)
-                self.instruments_entry.focus_set()
-                return False
-            # Further validation on ticker format could go here (e.g. regex for valid chars)
         
         selected_target_key = self.optimization_target_var.get()
         if not selected_target_key or selected_target_key not in self.available_target_keys:
@@ -364,13 +417,10 @@ class MarkovitsConfigDialog(simpledialog.Dialog):
         self.result_allow_shorting = self.allow_shorting_var.get()
         self.result_use_adj_close = self.use_adj_close_var.get()
         self.result_optimization_target_key = selected_target_key
-        self.result_is_ok = True # Mark successful validation
+        self.result_is_ok = True
         return True
 
     def apply(self) -> None:
         # Results are set in validate() if self.result_is_ok becomes True.
         # The simpledialog.Dialog base class handles the rest.
         pass
-
-    # Override buttonbox or rely on default OK/Cancel from simpledialog.Dialog
-    # If overriding, make sure to call self.ok() or self.cancel() which in turn call validate() and apply()
