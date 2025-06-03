@@ -5,12 +5,15 @@ from typing import Dict, Optional, Type, Any, Set, TypeVar
 from datetime import date
 import tkinter as tk
 
+<<<<<<< HEAD
 # Assuming portfolio.py is in the parent directory of allocator/
 # Adjust import path if portfolio.py is located elsewhere relative to this file.
 # For example, if portfolio.py is in the same directory as app.py (portfolio_optimizer/),
 # and this allocator.py is in portfolio_optimizer/allocator/
 from portfolio import Portfolio # Changed from relative to direct
 
+=======
+>>>>>>> afba0ac (architecture revamp)
 # Type alias for the state dictionary
 AllocatorState = Dict[str, Any]
 
