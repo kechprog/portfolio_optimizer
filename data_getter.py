@@ -11,9 +11,8 @@ logger = logging.getLogger(__name__)
 def _create_fetcher() -> Callable[[Set[str], pd.Timestamp, pd.Timestamp], Tuple[pd.DataFrame, List[str]]]:
     load_dotenv()
 
-    cache: Dict[str, pd.DataFrame] = {} # Stores full, validated dataframes from API
-    # key = os.getenv("ALPHA_KEY")
-    key = "GW7UT97X1WGGEYP7"
+    cache: Dict[str, pd.DataFrame] = {}
+    key = os.getenv("ALPHA_KEY")
 
     col_map = {
         "open": "Open",
