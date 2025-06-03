@@ -47,9 +47,8 @@ class App:
         
         self.available_allocator_types: Dict[str, Type[PortfolioAllocator]] = {
             "Manual Allocator": ManualAllocator,
-            # "Markovits Allocator": MarkovitsAllocator, # REMOVED
-            "MPT Max Sharpe": MaxSharpeAllocator,
-            "MPT Min Volatility": MinVolatilityAllocator,
+            "Max Sharpe": MaxSharpeAllocator,
+            "Min Volatility": MinVolatilityAllocator,
         }
         self._plot_data_cache: Optional[pd.DataFrame] = None # Retained for potential future use
         self._plot_data_cache_params: Optional[Dict[str, Any]] = None # Retained
@@ -186,6 +185,12 @@ class App:
             config_btn = ttk.Button(row_frame, text=GEAR_ICON, width=3, style="Toolbutton.TButton",
                                     command=lambda aid=allocator_id: self._on_configure_existing_allocator(aid))
             config_btn.pack(side="left", padx=2)
+
+            # New duplicate button
+            duplicate_btn = ttk.Button(row_frame, text="5D3", width=3, style="Toolbutton.TButton",
+                                       command=lambda aid=allocator_id: self._on_duplicate_allocator(aid))
+            duplicate_btn.pack(side="left", padx=2)
+
             del_btn = ttk.Button(row_frame, text=DELETE_ICON, width=3, style="Danger.Toolbutton.TButton",
                                  command=lambda aid=allocator_id: self._on_delete_allocator(aid))
             del_btn.pack(side="left", padx=2)
@@ -295,6 +300,44 @@ class App:
         else:
             messagebox.showerror("Error", "Allocator not found for deletion.", parent=self.root)
 
+    def _on_duplicate_allocator(self, allocator_id_to_duplicate: str):
+        if allocator_id_to_duplicate not in self.allocators_store:
+            messagebox.showerror("Duplicate Error", "Allocator not found for duplication.", parent=self.root)
+            return
+
+        original_data = self.allocators_store[allocator_id_to_duplicate]
+        original_instance = original_data['instance']
+        original_state = original_instance.get_state()
+        AllocatorClass = type(original_instance)
+
+        new_state = dict(original_state)  # shallow copy
+        original_name = original_state.get('name', 'Unnamed Allocator')
+        new_name = original_name + " (copy)"
+
+        # Check if new_name conflicts with existing allocator names
+        existing_names = {data['instance'].get_name().lower() for data in self.allocators_store.values()}
+        suffix_count = 1
+        proposed_name = new_name
+        while proposed_name.lower() in existing_names:
+            suffix_count += 1
+            proposed_name = f"{new_name} {suffix_count}"
+        new_state['name'] = proposed_name
+
+        try:
+            new_instance = AllocatorClass(**new_state)
+        except Exception as e:
+            messagebox.showerror("Duplicate Error", f"Failed to duplicate allocator: {e}", parent=self.root)
+            return
+
+        new_alloc_id = str(uuid.uuid4())
+        self.allocators_store[new_alloc_id] = {
+            'instance': new_instance,
+            'is_enabled_var': tk.BooleanVar(value=True)
+        }
+        self.set_status(f"Allocator '{proposed_name}' duplicated.", success=True)
+        self._redraw_allocator_list_ui()
+        self._refresh_allocations_display_area()
+
     def _on_global_update_button_click(self, is_auto_load_call=False):
         if not is_auto_load_call:
             self.set_status("Processing Fit & Plot...")
@@ -356,8 +399,13 @@ class App:
                         # 'computed_portfolio': computed_portfolio # Could also store this if needed later here
                     })
                 except Exception as e:
-                    msg = f"Error computing allocations for {allocator.get_name()}: {e}"; logger.error(msg, exc_info=True)
-                    self.set_status(msg, error=True);
+                    msg = f"Error computing allocations for {allocator.get_name()}: {e}";
+                    logger.error(msg, exc_info=True)
+                    # Check for no efficient target message
+                    if "no efficient target" in str(e).lower() or "no feasible" in str(e).lower():
+                        messagebox.showerror("Optimization Error", f"Allocator '{allocator.get_name()}' has no efficient target for the given requirements.", parent=self.root)
+                    else:
+                        self.set_status(msg, error=True)
                     any_allocator_failed_computation = True
         
         if not enabled_allocators_data and not any_allocator_failed_computation:
@@ -394,9 +442,16 @@ class App:
             # current_allocs is the Dict[str, float] derived for the plot period
             current_allocs = alloc_data['allocations_for_plot'] 
             
-            if not current_allocs: # If allocations_for_plot ended up being empty
-                logger.info(f"Allocator {allocator.get_name()} has no effective allocations for plotting period. Skipping plot for this allocator.")
-                self.ax.plot([], [], label=f"{allocator.get_name()} (No allocations for plot)"); num_series_plotted+=1; continue
+            if not current_allocs:
+                messagebox.showwarning(
+                    "No Allocations", 
+                    f"Allocator '{allocator.get_name()}' has no effective allocations for the plotting period.", 
+                    parent=self.root
+                )
+                # Continue with empty plot placeholder
+                self.ax.plot([], [], label=f"{allocator.get_name()} (No allocations for plot)")
+                num_series_plotted += 1
+                continue
 
             instruments_to_plot_for_this_alloc = {
                 inst for inst, weight in current_allocs.items() 

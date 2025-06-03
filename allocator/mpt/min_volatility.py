@@ -23,14 +23,26 @@ class MinVolatilityAllocator(PortfolioAllocator):
         
         self._allow_shorting: bool = bool(self._state.get('allow_shorting', False))
         self._use_adj_close: bool = bool(self._state.get('use_adj_close', True))
+        self._set_target_return: bool = bool(self._state.get('set_target_return', False))
+        self._target_return_value: Optional[float] = None
+        if self._set_target_return:
+            try:
+                self._target_return_value = float(self._state.get('target_return_value', 0.0))
+            except (ValueError, TypeError):
+                logger.warning(f"({self.get_name()} - MinVol): Invalid target_return_value '{self._state.get('target_return_value')}', defaulting to None.")
+                self._set_target_return = False # Disable if value is invalid
 
         self._state['allow_shorting'] = self._allow_shorting
         self._state['use_adj_close'] = self._use_adj_close
+        self._state['set_target_return'] = self._set_target_return
+        self._state['target_return_value'] = self._target_return_value
 
     def get_state(self) -> AllocatorState:
         current_state = self._state.copy()
         current_state['allow_shorting'] = self._allow_shorting
         current_state['use_adj_close'] = self._use_adj_close
+        current_state['set_target_return'] = self._set_target_return
+        current_state['target_return_value'] = self._target_return_value
         return current_state
 
     def compute_allocations(self, fitting_start_date: date, fitting_end_date: date) -> Portfolio:
@@ -115,7 +127,15 @@ class MinVolatilityAllocator(PortfolioAllocator):
         ef = EfficientFrontier(mu, S, weight_bounds=weight_bounds)
 
         try:
-            ef.min_volatility() # Key difference
+            if self._set_target_return and self._target_return_value is not None:
+                # PyPortfolioOpt expects target return as a decimal, e.g., 0.05 for 5%
+                target_return_decimal = self._target_return_value / 100.0 
+                logger.info(f"({self.get_name()} - MinVol): Optimizing for target return: {self._target_return_value}% ({target_return_decimal}).")
+                ef.efficient_return(target_return=target_return_decimal)
+            else:
+                logger.info(f"({self.get_name()} - MinVol): Optimizing for minimum volatility.")
+                ef.min_volatility()
+            
             computed_allocations = ef.clean_weights()
 
             final_allocs_for_segment = {inst: 0.0 for inst in current_instruments}
@@ -144,6 +164,8 @@ class MinVolatilityAllocator(PortfolioAllocator):
         initial_instruments_list: List[str] = []
         initial_allow_shorting = False
         initial_use_adj_close = True
+        initial_set_target_return = False
+        initial_target_return_value: Optional[float] = None
 
         if existing_state:
             initial_name = str(existing_state.get('name', initial_name))
@@ -152,6 +174,17 @@ class MinVolatilityAllocator(PortfolioAllocator):
                 initial_instruments_list = sorted(list(set(map(str, instruments_data))))
             initial_allow_shorting = bool(existing_state.get('allow_shorting', False))
             initial_use_adj_close = bool(existing_state.get('use_adj_close', True))
+            initial_set_target_return = bool(existing_state.get('set_target_return', False))
+            # Ensure target_return_value is float or None
+            raw_trv = existing_state.get('target_return_value')
+            if raw_trv is not None:
+                try:
+                    initial_target_return_value = float(raw_trv)
+                except (ValueError, TypeError):
+                    initial_target_return_value = None # Or a default float like 0.0 if preferred
+                    logger.warning(f"Could not parse existing target_return_value '{raw_trv}'. Using None.")
+            else:
+                initial_target_return_value = None
         
         dialog = MinVolatilityConfigDialog(
             parent_window,
@@ -159,7 +192,9 @@ class MinVolatilityAllocator(PortfolioAllocator):
             initial_name=initial_name,
             initial_instruments_list=initial_instruments_list,
             initial_allow_shorting=initial_allow_shorting,
-            initial_use_adj_close=initial_use_adj_close
+            initial_use_adj_close=initial_use_adj_close,
+            initial_set_target_return=initial_set_target_return,
+            initial_target_return_value=initial_target_return_value
         )
         
         if dialog.result_is_ok:
@@ -168,6 +203,8 @@ class MinVolatilityAllocator(PortfolioAllocator):
                 "instruments": set(dialog.result_instruments_set),
                 "allow_shorting": bool(dialog.result_allow_shorting),
                 "use_adj_close": bool(dialog.result_use_adj_close),
+                "set_target_return": bool(dialog.result_set_target_return),
+                "target_return_value": dialog.result_target_return_value # Already float or None from dialog
             }
             try:
                 _ = cls(**new_state) 
@@ -184,25 +221,48 @@ class MinVolatilityConfigDialog(simpledialog.Dialog):
                  initial_name: str,
                  initial_instruments_list: List[str],
                  initial_allow_shorting: bool,
-                 initial_use_adj_close: bool):
+                 initial_use_adj_close: bool,
+                 initial_set_target_return: bool,
+                 initial_target_return_value: Optional[float]):
         
         self.initial_name = initial_name
         self.initial_instruments_list = initial_instruments_list
         self.initial_allow_shorting = initial_allow_shorting
         self.initial_use_adj_close = initial_use_adj_close
+        self.initial_set_target_return = initial_set_target_return
+        self.initial_target_return_value = initial_target_return_value
 
         self.name_var = tk.StringVar(value=self.initial_name)
         self.allow_shorting_var = tk.BooleanVar(value=self.initial_allow_shorting)
         self.use_adj_close_var = tk.BooleanVar(value=self.initial_use_adj_close)
+        self.set_target_return_var = tk.BooleanVar(value=self.initial_set_target_return)
+        # Initialize StringVar for target_return_value carefully
+        trv_str = str(self.initial_target_return_value) if self.initial_target_return_value is not None else ""
+        self.target_return_value_var = tk.StringVar(value=trv_str)
         
         self.instrument_manager_widget: Optional[InstrumentListManagerWidget] = None
+        self.target_return_entry: Optional[ttk.Entry] = None
+        self.target_return_label: Optional[ttk.Label] = None
+        
         self.result_is_ok: bool = False
         self.result_name: Optional[str] = None
         self.result_instruments_set: Optional[Set[str]] = None
         self.result_allow_shorting: bool = False
         self.result_use_adj_close: bool = True
+        self.result_set_target_return: bool = False
+        self.result_target_return_value: Optional[float] = None
         
         super().__init__(parent, title)
+
+    def _toggle_target_return_entry_state(self, *args) -> None:
+        if self.target_return_entry and self.target_return_label:
+            if self.set_target_return_var.get():
+                self.target_return_entry.configure(state="normal")
+                self.target_return_label.configure(state="normal")
+                self.target_return_entry.focus_set()
+            else:
+                self.target_return_entry.configure(state="disabled")
+                self.target_return_label.configure(state="disabled")
 
     def body(self, master_frame: tk.Frame) -> tk.Entry | None:
         master_frame.pack_configure(padx=10, pady=10, fill="both", expand=True)
@@ -222,6 +282,26 @@ class MinVolatilityConfigDialog(simpledialog.Dialog):
         self.shorting_check.pack(side="top", anchor="w", fill="x")
         self.adj_close_check = ttk.Checkbutton(options_checks_frame, text="Use Adjusted Close Prices", variable=self.use_adj_close_var)
         self.adj_close_check.pack(side="top", anchor="w", fill="x")
+        
+        # Target Return Configuration
+        self.set_target_return_check = ttk.Checkbutton(
+            options_checks_frame, 
+            text="Set Target Return Rate", 
+            variable=self.set_target_return_var,
+            command=self._toggle_target_return_entry_state
+        )
+        self.set_target_return_check.pack(side="top", anchor="w", fill="x", pady=(5,0))
+
+        target_return_frame = ttk.Frame(options_checks_frame)
+        target_return_frame.pack(side="top", fill="x", padx=(20, 0), pady=(0,5)) # Indent slightly
+
+        self.target_return_label = ttk.Label(target_return_frame, text="Target Return (%):")
+        self.target_return_label.pack(side="left", padx=(0,5))
+        self.target_return_entry = ttk.Entry(target_return_frame, textvariable=self.target_return_value_var, width=10)
+        self.target_return_entry.pack(side="left")
+
+        # Initial state based on checkbox
+        self._toggle_target_return_entry_state()
 
         instruments_group_frame = ttk.LabelFrame(master_frame, text="Instruments")
         instruments_group_frame.pack(side="top", fill="both", expand=True, pady=5)
@@ -255,6 +335,28 @@ class MinVolatilityConfigDialog(simpledialog.Dialog):
         
         self.result_allow_shorting = self.allow_shorting_var.get()
         self.result_use_adj_close = self.use_adj_close_var.get()
+        self.result_set_target_return = self.set_target_return_var.get()
+
+        if self.result_set_target_return:
+            trv_str = self.target_return_value_var.get().strip()
+            if not trv_str:
+                messagebox.showerror("Validation Error", "Target Return Rate cannot be empty if 'Set Target Return Rate' is checked.", parent=self)
+                if self.target_return_entry:
+                    self.target_return_entry.focus_set()
+                return False
+            try:
+                self.result_target_return_value = float(trv_str)
+                if self.result_target_return_value <= 0:
+                    messagebox.showwarning("Validation Warning", "Target Return Rate should ideally be positive.", parent=self)
+                    # Allow proceeding but with a warning
+            except ValueError:
+                messagebox.showerror("Validation Error", "Target Return Rate must be a valid number (e.g., 5 or 7.25).", parent=self)
+                if self.target_return_entry:
+                    self.target_return_entry.focus_set()
+                return False
+        else:
+            self.result_target_return_value = None # Ensure it's None if not set
+            
         self.result_is_ok = True
         return True
 
