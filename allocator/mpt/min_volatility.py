@@ -8,10 +8,10 @@ import tkinter as tk
 from tkinter import ttk, simpledialog, messagebox
 import uuid
 
-from ..allocator import PortfolioAllocator, AllocatorState, PAL
-from ..util import InstrumentListManagerWidget
-from ...portfolio import Portfolio # Relative import from portfolio_optimizer directory
-from ...data_getter import av_fetcher # Relative import data_getter
+from allocator.allocator import PortfolioAllocator, AllocatorState, PAL # Adjusted import
+from allocator.util import InstrumentListManagerWidget # Adjusted import
+from portfolio import Portfolio # Adjusted import
+from data_getter import av_fetcher # Adjusted import
 
 logger = logging.getLogger(__name__)
 

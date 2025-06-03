@@ -18,7 +18,9 @@ from typing import Optional, Set, Dict, Type, Any, List, Tuple
 # Import the new AllocatorState along with PortfolioAllocator
 from allocator.allocator import PortfolioAllocator, AllocatorState
 from allocator.manual import ManualAllocator
-from allocator.markovits import MarkovitsAllocator
+# from allocator.markovits import MarkovitsAllocator # REMOVED
+from allocator.mpt.max_sharpe import MaxSharpeAllocator # New import
+from allocator.mpt.min_volatility import MinVolatilityAllocator # New import
 from portfolio import Portfolio # Added import
 
 from data_getter import av_fetcher # Changed to import av_fetcher directly
@@ -45,7 +47,9 @@ class App:
         
         self.available_allocator_types: Dict[str, Type[PortfolioAllocator]] = {
             "Manual Allocator": ManualAllocator,
-            "Markovits Allocator": MarkovitsAllocator,
+            # "Markovits Allocator": MarkovitsAllocator, # REMOVED
+            "MPT Max Sharpe": MaxSharpeAllocator,
+            "MPT Min Volatility": MinVolatilityAllocator,
         }
         self._plot_data_cache: Optional[pd.DataFrame] = None # Retained for potential future use
         self._plot_data_cache_params: Optional[Dict[str, Any]] = None # Retained
@@ -685,9 +689,13 @@ class App:
             display_text = f"Allocator: '{allocator.get_name()}' ({status_text})\nType: {type(allocator).__name__}\n"
             display_text += f"Instruments: {', '.join(sorted(list(allocator.get_instruments()))) if allocator.get_instruments() else 'None'}\n"
             
-            if isinstance(allocator, MarkovitsAllocator):
-                # Ensure attribute names match the MarkovitsAllocator class definition
-                display_text += f"Optimization Target: {getattr(allocator, 'optimization_target', 'N/A')}\n"
+            # Removed MarkovitsAllocator specific block
+            if isinstance(allocator, MaxSharpeAllocator):
+                display_text += f"Optimization Target: Max Sharpe Ratio (Implicit)\n"
+                display_text += f"Allows Shorting: {getattr(allocator, '_allow_shorting', 'N/A')}\n"
+                display_text += f"Use Adjusted Close: {getattr(allocator, '_use_adj_close', 'N/A')}\n"
+            elif isinstance(allocator, MinVolatilityAllocator):
+                display_text += f"Optimization Target: Minimize Volatility (Implicit)\n"
                 display_text += f"Allows Shorting: {getattr(allocator, '_allow_shorting', 'N/A')}\n"
                 display_text += f"Use Adjusted Close: {getattr(allocator, '_use_adj_close', 'N/A')}\n"
             # Add other allocator-specific details here if needed using getattr for safety
