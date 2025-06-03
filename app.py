@@ -45,8 +45,7 @@ class App:
         
         self.available_allocator_types: Dict[str, Type[PortfolioAllocator]] = {
             "Manual Allocator": ManualAllocator,
-            "Max Sharpe": MaxSharpeAllocator,
-            "Min Volatility": MinVolatilityAllocator,
+            "Markovits Allocator": MarkovitsAllocator,
         }
         self._plot_data_cache: Optional[pd.DataFrame] = None # Retained for potential future use
         self._plot_data_cache_params: Optional[Dict[str, Any]] = None # Retained
