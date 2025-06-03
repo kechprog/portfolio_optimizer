@@ -16,12 +16,12 @@ TEMP_DIR = "build_temp"
 # PyInstaller options
 PYINSTALLER_OPTIONS = [
     "--onefile",  # Create single executable
-    "--noconsole",  # Run without console window (enable for production)
     "--clean",  # Clean build artifacts
     f"--workpath={TEMP_DIR}/pyinstaller",
     f"--distpath=dist",
     f"--name={APP_NAME}",
-    f"--add-data={ENV_PATH}{os.pathsep}.",  # Include .env
+    "--optimize=2",
+    # f"--add-data={ENV_PATH}{os.pathsep}.",  # Include .env
 ]
 
 # Resize icon and convert to ICO format (if needed)

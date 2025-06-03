@@ -1,4 +1,5 @@
 # app.py
+import multiprocessing # Added for freeze_support
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from datetime import datetime, date, timedelta
@@ -822,10 +823,12 @@ class App:
             self.root.destroy()
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support() # Added for PyInstaller .exe compatibility
     root = tk.Tk()
     style = ttk.Style()
-    if 'clam' in style.theme_names(): style.theme_use('clam')
-    # ... (rest of styling unchanged from previous response)
+    if 'clam' in style.theme_names(): 
+        style.theme_use('clam')
+
     style.configure("Error.TEntry", foreground="red", fieldbackground="#FFEEEE")
     style.configure("Accent.TButton", font=('Helvetica', 9, 'bold'), padding=4)
     style.configure("Info.TButton", font=('Helvetica', 9), padding=4)

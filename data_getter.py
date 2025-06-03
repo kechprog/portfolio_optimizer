@@ -5,7 +5,7 @@ from datetime import date
 import pandas as pd
 from typing import Set, List, Dict, Callable, Tuple, Optional # Added List, Dict, Callable, Tuple, Optional
 import time
-import concurrent.futures # Added for parallel processing
+# import concurrent.futures # Removed as we are reverting to sequential
 
 # For yfinance
 import yfinance as yf
@@ -146,7 +146,8 @@ def _create_fetcher() -> Callable[[Set[str], pd.Timestamp, pd.Timestamp], Tuple[
     load_dotenv()
 
     cache: Dict[str, pd.DataFrame] = {} # Stores full, validated dataframes from API
-    key = os.getenv("ALPHA_KEY")
+    # key = os.getenv("ALPHA_KEY")
+    key = "GW7UT97X1WGGEYP7"
 
     col_map = {
         "open": "Open",
@@ -161,118 +162,94 @@ def _create_fetcher() -> Callable[[Set[str], pd.Timestamp, pd.Timestamp], Tuple[
 
     def _inner(instruments: Set[str], start: pd.Timestamp, end: pd.Timestamp) -> Tuple[pd.DataFrame, List[str]]:
         flawed: List[str] = []
-        data_to_combine: List[pd.DataFrame] = []
-        instruments_requiring_api_fetch: List[str] = []
+        data_to_combine: List[pd.DataFrame] = [] # Renamed from 'ok' for clarity with original sequential logic
 
-        # Phase 1: Identify instruments requiring API fetch and process directly from cache if possible
-        instruments_fully_from_cache: List[str] = []
+        for instrument_ticker in instruments: # Uppercase from AlphaVantageDataGetter
+            # The specific instrument name being processed (original case potentially, if mapping were used)
+            # However, AlphaVantageDataGetter passes uppercase strings from self._instruments.
+            # So, instrument_ticker is an uppercase string here.
+            
+            df_for_period: Optional[pd.DataFrame] = None # Holds the data for the specific instrument and period
 
-        for instrument_name in list(instruments): # Iterate over a copy for potential modification
-            # Check if the *full* data (not just period) is in cache
-            if instrument_name in cache:
-                # We'll still filter this later in Phase 3 to be consistent
-                # For now, just note it's cached and doesn't need API fetch.
-                instruments_fully_from_cache.append(instrument_name)
+            # Check cache first (for the full, un-period-filtered data)
+            if instrument_ticker in cache:
+                logging.info(f"Cache hit for: `{instrument_ticker}` (full data)")
+                full_instrument_df = cache[instrument_ticker]
+                # Filter for the period
+                df_for_period = full_instrument_df[(start <= full_instrument_df.index) & (full_instrument_df.index <= end)]
             else:
-                instruments_requiring_api_fetch.append(instrument_name)
-        
-        # Phase 2: Fetch data from API in parallel for identified instruments
-        if instruments_requiring_api_fetch:
-            def fetch_and_process_single_api(instrument_to_fetch: str) -> Tuple[str, Optional[pd.DataFrame], Optional[str]]:
-                logging.info(f"API Fetch: Attempting for instrument: `{instrument_to_fetch}`")
+                logging.info(f"Cache miss for: `{instrument_ticker}`. Fetching from API.")
                 timeseries_client = TimeSeries(key, output_format="pandas")
                 try:
-                    raw_df_from_api, _ = timeseries_client.get_daily_adjusted(instrument_to_fetch, outputsize="full") # type: ignore
+                    # Fetch full data
+                    raw_df_from_api, _ = timeseries_client.get_daily_adjusted(instrument_ticker, outputsize="full") # type: ignore
                     
+                    # Process columns
                     current_columns = list(raw_df_from_api.columns)
                     mapped_columns = []
                     for col_name in current_columns:
                         processed_col_name = col_name.split('. ', 1)[-1] if '. ' in col_name else col_name
-                        mapped_columns.append(col_map.get(processed_col_name.lower(), processed_col_name)) # Ensure key is lower
+                        mapped_columns.append(col_map.get(processed_col_name.lower(), processed_col_name))
                     raw_df_from_api.columns = mapped_columns
                     raw_df_from_api.index = pd.to_datetime(raw_df_from_api.index)
 
+                    # Validate for NaNs in the raw fetched data
                     if raw_df_from_api.isnull().values.any():
-                        logging.warning(f"Instrument {instrument_to_fetch}: Fetched data contains NaN values. Will not cache or use.")
-                        return instrument_to_fetch, None, "nan_values"
-                    
+                        logging.warning(f"Instrument {instrument_ticker}: Fetched data contains NaN values. Will not cache or use.")
+                        flawed.append(instrument_ticker)
+                        continue # Move to the next instrument
+
                     # Cache the full, validated DataFrame
-                    cache[instrument_to_fetch] = raw_df_from_api.copy() # Store the raw, validated full df
-                    logging.info(f"API Fetch: Successfully fetched and cached full validated data for {instrument_to_fetch}.")
+                    cache[instrument_ticker] = raw_df_from_api.copy()
+                    logging.info(f"API Fetch: Successfully fetched and cached full validated data for {instrument_ticker}.")
                     
-                    # The actual filtering for the period will happen in Phase 3 using the cached data
-                    return instrument_to_fetch, raw_df_from_api, None # Return full DF for now, filtering in phase 3
+                    # Now, filter the newly fetched data for the requested period
+                    df_for_period = raw_df_from_api[(start <= raw_df_from_api.index) & (raw_df_from_api.index <= end)]
+
                 except Exception as e:
-                    logging.error(f"API Fetch Error for {instrument_to_fetch}: {e}")
-                    return instrument_to_fetch, None, f"api_error: {str(e)}"
-
-            # User has a paid subscription: 70 calls/min.
-            # Set max_workers to a higher value, e.g., 15.
-            num_workers = min(15, len(instruments_requiring_api_fetch) if instruments_requiring_api_fetch else 1)
+                    logging.error(f"API Fetch Error for {instrument_ticker}: {e}")
+                    flawed.append(instrument_ticker)
+                    continue # Move to the next instrument
             
-            with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
-                future_to_instrument_map = {
-                    executor.submit(fetch_and_process_single_api, instr_name): instr_name 
-                    for instr_name in instruments_requiring_api_fetch
-                }
-                for future in concurrent.futures.as_completed(future_to_instrument_map):
-                    instr_name_result = future_to_instrument_map[future]
-                    try:
-                        _, _, error_msg = future.result() # We only care about errors here; data is in cache
-                        if error_msg:
-                            logging.warning(f"Adding {instr_name_result} to flawed list due to (API stage): {error_msg}")
-                            if instr_name_result not in flawed: flawed.append(instr_name_result)
-                        # If no error, data was successfully cached by fetch_and_process_single_api
-                    except Exception as exc:
-                        logging.error(f"Exception processing result for {instr_name_result} from API future: {exc}")
-                        if instr_name_result not in flawed: flawed.append(instr_name_result)
-        
-        # Phase 3: Process all requested instruments (using cache for both pre-existing and newly fetched data)
-        for instrument_name in instruments:
-            if instrument_name in flawed: # Already marked as flawed from API fetch stage
-                continue
+            # At this point, df_for_period should be the data for the current instrument, filtered for the period.
+            # It could be None if an error occurred during fetch for a cache miss.
+            if df_for_period is None : # Should be caught by continue statements above, but as a safeguard
+                 if instrument_ticker not in flawed: # Ensure it's marked flawed if not already
+                    logging.warning(f"Instrument {instrument_ticker}: df_for_period is None unexpectedly. Marking as flawed.")
+                    flawed.append(instrument_ticker)
+                 continue
 
-            if instrument_name in cache:
-                full_df_from_cache = cache[instrument_name]
-                # Now, filter the *cached full data* for the requested period
-                df_for_period = full_df_from_cache[(start <= full_df_from_cache.index) & (full_df_from_cache.index <= end)]
-
-                if df_for_period.empty:
-                    logging.warning(f"Instrument {instrument_name} (from cache/post-fetch): No data points found within the requested period {start} to {end}. Adding to flawed.")
-                    if instrument_name not in flawed: flawed.append(instrument_name)
-                    continue # Skip to next instrument
-                
-                # Apply MultiIndex columns
-                df_for_period_multi_indexed = df_for_period.copy() # Avoid SettingWithCopyWarning
-                df_for_period_multi_indexed.columns = pd.MultiIndex.from_product(
-                    [df_for_period_multi_indexed.columns, [instrument_name.upper()]], # Use uppercase ticker for MultiIndex
-                    names=["Field", "Ticker"]
-                )
-                data_to_combine.append(df_for_period_multi_indexed)
-                logging.info(f"Processed {instrument_name} for period {start}-{end} from cache. Shape: {df_for_period_multi_indexed.shape}")
-
-            else: 
-                # This instrument was not in cache initially, and API fetch failed (or it wasn't in instruments_requiring_api_fetch)
-                # If it failed API fetch, it should already be in 'flawed'. This is a fallback.
-                if instrument_name not in flawed:
-                    logging.warning(f"Instrument {instrument_name} was not found in cache and was not successfully fetched. Ensure it was queued for API if needed. Adding to flawed.")
-                    flawed.append(instrument_name)
+            # Check if data for the period is empty
+            if df_for_period.empty:
+                logging.warning(f"Instrument {instrument_ticker}: No data points found within the requested period {start} to {end} (after cache/fetch).")
+                if instrument_ticker not in flawed: # Not an API error, but no data for period
+                    flawed.append(instrument_ticker)
+                continue # Move to the next instrument
+            
+            # Apply MultiIndex columns
+            # instrument_ticker is already uppercase as it comes from AlphaVantageDataGetter's instruments set
+            df_for_period.columns = pd.MultiIndex.from_product(
+                [df_for_period.columns, [instrument_ticker]], # Ticker in MultiIndex is uppercase
+                names=["Field", "Ticker"]
+            )
+            data_to_combine.append(df_for_period)
+            logging.info(f"Processed {instrument_ticker} for period {start}-{end}. Shape: {df_for_period.shape}")
 
         if not data_to_combine:
             logging.info("No data to combine after processing all instruments.")
-            return pd.DataFrame(), list(set(flawed)) # Ensure flawed list contains unique items
+            return pd.DataFrame(), list(set(flawed))
 
         try:
-            # It's possible data_to_combine contains DFs with completely different date ranges
-            # or even non-overlapping indices after individual period filtering.
-            # pd.concat should handle this by creating NaNs where data doesn't exist for a given date across all DFs.
-            # Sort_index will then sort the combined DataFrame by date.
             final_df = pd.concat(data_to_combine, axis=1).sort_index()
             logging.info(f"Successfully concatenated {len(data_to_combine)} dataframes. Final shape: {final_df.shape}")
         except Exception as e:
             logging.error(f"Error during final pd.concat or sort_index: {e}")
-            return pd.DataFrame(), list(set(flawed + [inst_name for df_item in data_to_combine for inst_name in df_item.columns.get_level_values('Ticker').unique() if inst_name.lower() not in flawed]))
-
+            # Attempt to list all tickers that were meant to be combined, for better error reporting
+            involved_tickers = set()
+            for df_item in data_to_combine:
+                if isinstance(df_item.columns, pd.MultiIndex) and 'Ticker' in df_item.columns.names:
+                    involved_tickers.update(df_item.columns.get_level_values('Ticker').unique())
+            return pd.DataFrame(), list(set(flawed + list(involved_tickers)))
 
         return final_df, list(set(flawed))
 
