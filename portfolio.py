@@ -1,6 +1,7 @@
-\
-from datetime import date
+from datetime import date, timedelta
 from typing import List, Dict, Any, Optional
+import pandas as pd
+from data_getter import av_fetcher
 
 class Portfolio:
     """
@@ -23,18 +24,6 @@ class Portfolio:
     def append(self, end_date: date, allocations: Dict[str, float]) -> None:
         """
         Appends a new allocation segment to the portfolio.
-
-        The new segment starts where the previous one ended, or from the
-        portfolio\'s initial_start_date if this is the first segment.
-
-        Args:
-            end_date: The end date for this new allocation segment.
-            allocations: A dictionary representing the asset allocations
-                         (e.g., {"TICKER": 0.6, "OTHER": 0.4}) for this segment.
-
-        Raises:
-            TypeError: If arguments are of incorrect types.
-            ValueError: If end_date is not after the segment\'s start_date.
         """
         if not isinstance(end_date, date):
             raise TypeError("end_date must be a datetime.date object.")
@@ -42,105 +31,96 @@ class Portfolio:
             raise TypeError("allocations must be a dictionary.")
         for ticker, weight in allocations.items():
             if not isinstance(ticker, str) or not isinstance(weight, (float, int)):
-                raise TypeError(
-                    "Allocations dictionary must have string keys and float/int values."
-                )
-
-        current_segment_start_date: date
+                raise TypeError("Allocations must have string keys and float/int values.")
         if not self.segments:
-            current_segment_start_date = self.initial_start_date
+            segment_start = self.initial_start_date
         else:
-            current_segment_start_date = self.segments[-1]['end_date']
-
-        if end_date <= current_segment_start_date:
-            raise ValueError(
-                f"The end_date ({end_date}) must be after the segment\'s start_date ({current_segment_start_date})."
-            )
-
+            segment_start = self.segments[-1]['end_date']
+        if end_date <= segment_start:
+            raise ValueError(f"end_date ({end_date}) must be after start_date ({segment_start}).")
         self.segments.append({
-            'start_date': current_segment_start_date,
+            'start_date': segment_start,
             'end_date': end_date,
-            'allocations': allocations.copy() # Store a copy
+            'allocations': allocations.copy()
         })
 
     def get(self, query_end_date: date) -> List[Dict[str, Any]]:
         """
         Retrieves a list of portfolio segments up to a specified end date.
-
-        Segments are "cropped" if the query_end_date falls within them.
-        Only segments (or parts of segments) that occur before or at query_end_date
-        and after or at initial_start_date are returned.
-
-        Args:
-            query_end_date: The date up to which portfolio segments should be retrieved.
-
-        Returns:
-            A list of segment dictionaries. Each dictionary contains:
-            {'start_date': date, 'end_date': date, 'allocations': Dict[str, float]}.
-            Returns an empty list if query_end_date is before initial_start_date
-            or no segments are defined.
         """
         if not isinstance(query_end_date, date):
             raise TypeError("query_end_date must be a datetime.date object.")
-
         if query_end_date < self.initial_start_date:
             return []
-
-        result_segments: List[Dict[str, Any]] = []
-        for segment in self.segments:
-            # Skip segments that entirely start after or at the query_end_date
-            if segment['start_date'] >= query_end_date:
+        result = []
+        for seg in self.segments:
+            if seg['start_date'] >= query_end_date:
                 continue
+            start = seg['start_date']
+            end = min(seg['end_date'], query_end_date)
+            if end > start:
+                result.append({'start_date': start, 'end_date': end, 'allocations': seg['allocations']})
+        return result
 
-            # Determine the effective start and end for this segment based on query_end_date
-            effective_segment_start = segment['start_date']
-            effective_segment_end = min(segment['end_date'], query_end_date)
-
-            # Only include the segment if it has a valid, positive duration within the query range
-            if effective_segment_end > effective_segment_start:
-                result_segments.append({
-                    'start_date': effective_segment_start,
-                    'end_date': effective_segment_end,
-                    'allocations': segment['allocations'] # Already a copy from append
-                })
-        
-        return result_segments
-
-    def plot(self, plotter_handle: Any, query_end_date: date) -> None:
+    def plot(self, ax: Any, query_end_date: date, include_dividends: bool = False, label: str = ""):
         """
-        Visualizes the portfolio\'s segments up to a specified end date.
-
-        For now, this method prints the segments that would be plotted.
-        The actual plotting logic using plotter_handle will be implemented later.
+        Plots the portfolio's performance up to a given date on the provided Axes.
 
         Args:
-            plotter_handle: A handle to a plotting utility (e.g., matplotlib Axes object).
-                            Currently unused beyond being an argument.
-            query_end_date: The date up to which the portfolio should be plotted.
+            ax: A matplotlib Axes object to draw on.
+            query_end_date: The date up to which to plot.
+            include_dividends: Whether to use adjusted close prices.
+            label: Label for this portfolio (used in legend).
         """
         if not isinstance(query_end_date, date):
             raise TypeError("query_end_date must be a datetime.date object.")
 
-        segments_to_plot = self.get(query_end_date)
-
-        if not segments_to_plot:
-            print(f"Portfolio.plot: No segments to plot up to {query_end_date}.")
+        segments = self.get(query_end_date)
+        if not segments:
+            ax.plot([], [], label=f"{label} (No data)")
             return
 
-        print(f"Portfolio.plot: Visualizing portfolio up to {query_end_date} using plotter_handle ({type(plotter_handle)}):")
-        for i, segment in enumerate(segments_to_plot):
-            print(
-                f"  Segment {i+1}: From {segment['start_date']} to {segment['end_date']}, "
-                f"Allocations: {segment['allocations']}"
-            )
-        # In a future implementation, this is where plotter_handle would be used
-        # to draw the performance/allocations for each segment.
-        # This would involve:
-        # 1. For each segment:
-        #    a. Fetching historical price data for assets in segment['allocations']
-        #       between segment['start_date'] and segment['end_date'].
-        #    b. Calculating portfolio daily returns based on segment['allocations'].
-        #    c. Calculating cumulative returns for this segment.
-        #    d. Plotting these cumulative returns, potentially chaining them visually
-        #       if there are multiple segments.
-        print("Portfolio.plot: (Actual plotting logic to be implemented)")
+        # Accumulate a single continuous series
+        dates_all = []
+        values_all = []
+        cumulative_factor = 1.0
+        for seg in segments:
+            start = seg['start_date']
+            end = seg['end_date']
+            allocs = {t: w for t, w in seg['allocations'].items() if abs(w) > 1e-9}
+            if not allocs:
+                continue
+            tickers = {t.upper() for t in allocs}
+            try:
+                raw_df, _ = av_fetcher(
+                    tickers,
+                    pd.to_datetime(start),
+                    pd.to_datetime(end)
+                )
+            except Exception:
+                continue
+            field = 'AdjClose' if include_dividends else 'Close'
+            try:
+                price_df = raw_df.xs(field, level='Field', axis=1, drop_level=True)
+            except Exception:
+                continue
+            price_df = price_df.ffill().bfill()
+            returns = price_df.pct_change().dropna(how='all')
+            returns = returns[returns.index.date >= start]
+            if returns.empty:
+                continue
+            weights = pd.Series({col: allocs.get(col, 0.0) for col in returns.columns})
+            port_ret = returns.mul(weights, axis=1).sum(axis=1)
+            cum_series = (1 + port_ret).cumprod() * cumulative_factor
+            # Prepare points
+            seg_dates = [start] + [ts.date() for ts in cum_series.index]
+            seg_factors = [cumulative_factor] + cum_series.tolist()
+            # Convert to percentage returns
+            for dt, factor in zip(seg_dates, seg_factors):
+                dates_all.append(dt)
+                values_all.append((factor - 1.0) * 100.0)
+            cumulative_factor = seg_factors[-1] if seg_factors else cumulative_factor
+
+        # Single plot call
+        ax.plot(dates_all, values_all, linestyle='-', label=label)
+        # Caller handles legend and formatting

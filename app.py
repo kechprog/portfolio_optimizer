@@ -476,83 +476,18 @@ class App:
         if problematic_tickers_fetch:
              messagebox.showwarning("Plot Data Issues", f"Could not fetch/validate plot data for ticker(s):\n{', '.join(sorted(list(problematic_tickers_fetch)))}.", parent=self.root)
 
+        # Delegate plotting to each portfolio
         self.ax.clear()
         self._setup_plot_axes_appearance()
         self.ax.set_xlim(plot_start_dt, plot_actual_end_dt)
-        
-        num_series_plotted = 0
         for alloc_data in enabled_allocators_data:
             allocator = alloc_data['instance']
-            # current_allocs is the Dict[str, float] derived for the plot period
-            current_allocs = alloc_data['allocations_for_plot'] 
-            
-            if not current_allocs:
-                messagebox.showwarning(
-                    "No Allocations", 
-                    f"Allocator '{allocator.get_name()}' has no effective allocations for the plotting period.", 
-                    parent=self.root
-                )
-                # Continue with empty plot placeholder
-                self.ax.plot([], [], label=f"{allocator.get_name()} (No allocations for plot)")
-                num_series_plotted += 1
-                continue
-
-            instruments_to_plot_for_this_alloc = {
-                inst for inst, weight in current_allocs.items() 
-                if abs(weight) > 1e-9 and inst in historical_prices_for_plot.columns and not historical_prices_for_plot[inst].isnull().all()
-            }
-
-            if not instruments_to_plot_for_this_alloc:
-                self.ax.plot([], [], label=f"{allocator.get_name()} (No plottable data)"); num_series_plotted+=1; continue
-
-            alloc_prices_for_plot_period = historical_prices_for_plot[list(instruments_to_plot_for_this_alloc)]
-            alloc_prices_for_plot_period = alloc_prices_for_plot_period[alloc_prices_for_plot_period.index.date <= plot_actual_end_dt]
-
-            if alloc_prices_for_plot_period.empty or alloc_prices_for_plot_period.shape[0] < 2:
-                self.ax.plot([], [], label=f"{allocator.get_name()} (Insufficient data for plot period)"); num_series_plotted+=1; continue
-            
-            daily_returns = alloc_prices_for_plot_period.pct_change()
-            relevant_daily_returns = daily_returns[daily_returns.index.date >= plot_start_dt].copy()
-            relevant_daily_returns.dropna(how='all', inplace=True)
-
-            if relevant_daily_returns.empty:
-                logger.info(f"({allocator.get_name()}): No daily returns available in the plotting period starting {plot_start_dt}.")
-                self.ax.plot([], [], label=f"{allocator.get_name()} (No returns in plot period)"); num_series_plotted+=1; continue
-
-            alloc_series_data = {
-                inst: current_allocs.get(inst, 0.0) 
-                for inst in relevant_daily_returns.columns 
-                if inst in current_allocs
-            }
-            alloc_series = pd.Series(alloc_series_data)
-            
-            common_cols_for_dot_product = [col for col in alloc_series.index if col in relevant_daily_returns.columns]
-            
-            if not common_cols_for_dot_product:
-                 self.ax.plot([], [], label=f"{allocator.get_name()} (No common data for returns)"); num_series_plotted+=1; continue
-
-            portfolio_daily_returns = relevant_daily_returns[common_cols_for_dot_product].mul(alloc_series[common_cols_for_dot_product], axis=1).sum(axis=1)
-            
-            plot_dates_series = [plot_start_dt]
-            cumulative_performance_series = [0.0]
-
-            if not portfolio_daily_returns.empty:
-                cumulative_calc = (1 + portfolio_daily_returns).cumprod() - 1
-                for idx_date, cum_ret_val in cumulative_calc.items():
-                    current_dt = idx_date.date() if isinstance(idx_date, pd.Timestamp) else idx_date
-                    if current_dt > plot_dates_series[-1]:
-                        plot_dates_series.append(current_dt)
-                        cumulative_performance_series.append(cum_ret_val * 100.0)
-                    elif current_dt == plot_dates_series[-1] and current_dt == plot_start_dt:
-                        cumulative_performance_series[-1] = cum_ret_val * 100.0
-            
-            label_suffix = " (Performance)"
-            self.ax.plot(plot_dates_series, cumulative_performance_series, linestyle='-', label=f"{allocator.get_name()}{label_suffix}")
-            num_series_plotted +=1
-        
-        if num_series_plotted > 0 : self.ax.legend(fontsize='x-small', loc='best')
-        else: self.ax.text(0.5, 0.5, "No performance data to plot.", ha='center', va='center', transform=self.ax.transAxes, fontsize='small')
-
+            portfolio_obj = allocator._last_computed_portfolio
+            label = f"{allocator.get_name()} (Performance)"
+            # portfolio.plot handles empty data internally
+            portfolio_obj.plot(self.ax, plot_actual_end_dt, include_dividends=self.plot_dividends_var.get(), label=label)
+        # Draw legend and finalize
+        self.ax.legend(fontsize='x-small', loc='best')
         self.fig.autofmt_xdate(rotation=25, ha='right'); self.fig.tight_layout(pad=1.5); self.canvas.draw()
         self._refresh_allocations_display_area()
         if not is_auto_load_call:
