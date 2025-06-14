@@ -27,6 +27,13 @@ class MaxSharpeAllocator(PortfolioAllocator):
         # Ensure these are in the state for get_state()
         self._state['allow_shorting'] = self._allow_shorting
         self._state['use_adj_close'] = self._use_adj_close
+        # Dynamic update configuration (not yet supported)
+        self._update_enabled: bool = bool(self._state.get('update_enabled', False))
+        self._update_interval_value: int = int(self._state.get('update_interval_value', 1))
+        self._update_interval_unit: str = str(self._state.get('update_interval_unit', 'days'))
+        self._state['update_enabled'] = self._update_enabled
+        self._state['update_interval_value'] = self._update_interval_value
+        self._state['update_interval_unit'] = self._update_interval_unit
         # 'optimization_target' is implicitly max_sharpe
         # No separate _allocations dict needed here as it's computed on demand and returned in Portfolio
 
@@ -34,6 +41,10 @@ class MaxSharpeAllocator(PortfolioAllocator):
         current_state = self._state.copy()
         current_state['allow_shorting'] = self._allow_shorting
         current_state['use_adj_close'] = self._use_adj_close
+        # Dynamic update settings
+        current_state['update_enabled'] = getattr(self, '_update_enabled', False)
+        current_state['update_interval_value'] = getattr(self, '_update_interval_value', 1)
+        current_state['update_interval_unit'] = getattr(self, '_update_interval_unit', 'days')
         return current_state
 
     def compute_allocations(self, fitting_start_date: date, fitting_end_date: date, test_end_date: date) -> Portfolio:
@@ -141,6 +152,18 @@ class MaxSharpeAllocator(PortfolioAllocator):
                   parent_window: tk.Misc,
                   existing_state: Optional[AllocatorState] = None
                  ) -> Optional[AllocatorState]:
+        # Initialize dynamic update settings
+        initial_update_enabled = False
+        initial_update_interval_value = 1
+        initial_update_interval_unit = 'days'
+        if existing_state:
+            initial_update_enabled = bool(existing_state.get('update_enabled', False))
+            try:
+                initial_update_interval_value = int(existing_state.get('update_interval_value', 1))
+            except (ValueError, TypeError):
+                initial_update_interval_value = 1
+            initial_update_interval_unit = str(existing_state.get('update_interval_unit', 'days'))
+
         initial_name = f"Max Sharpe MPT {str(uuid.uuid4())[:4]}"
         initial_instruments_list: List[str] = []
         initial_allow_shorting = False
@@ -153,6 +176,27 @@ class MaxSharpeAllocator(PortfolioAllocator):
                 initial_instruments_list = sorted(list(set(map(str, instruments_data))))
             initial_allow_shorting = bool(existing_state.get('allow_shorting', False))
             initial_use_adj_close = bool(existing_state.get('use_adj_close', True))
+        initial_name = f"Max Sharpe MPT {str(uuid.uuid4())[:4]}"
+        initial_instruments_list: List[str] = []
+        initial_allow_shorting = False
+        initial_use_adj_close = True
+        initial_update_enabled = False
+        initial_update_interval_value = 1
+        initial_update_interval_unit = 'days'
+
+        if existing_state:
+            initial_name = str(existing_state.get('name', initial_name))
+            instruments_data = existing_state.get('instruments')
+            if isinstance(instruments_data, (set, list, tuple)):
+                initial_instruments_list = sorted(list(set(map(str, instruments_data))))
+            initial_allow_shorting = bool(existing_state.get('allow_shorting', False))
+            initial_use_adj_close = bool(existing_state.get('use_adj_close', True))
+            initial_update_enabled = bool(existing_state.get('update_enabled', False))
+            try:
+                initial_update_interval_value = int(existing_state.get('update_interval_value', 1))
+            except (ValueError, TypeError):
+                initial_update_interval_value = 1
+            initial_update_interval_unit = str(existing_state.get('update_interval_unit', 'days'))
         
         dialog = MaxSharpeConfigDialog(
             parent_window,
@@ -160,16 +204,22 @@ class MaxSharpeAllocator(PortfolioAllocator):
             initial_name=initial_name,
             initial_instruments_list=initial_instruments_list,
             initial_allow_shorting=initial_allow_shorting,
-            initial_use_adj_close=initial_use_adj_close
+            initial_use_adj_close=initial_use_adj_close,
+            initial_update_enabled=initial_update_enabled,
+            initial_update_interval_value=initial_update_interval_value,
+            initial_update_interval_unit=initial_update_interval_unit
         )
         
         if dialog.result_is_ok:
+            assert not dialog.update_enabled_var.get(), "Dynamic update is not yet supported."
             new_state: AllocatorState = {
                 "name": str(dialog.result_name),
                 "instruments": set(dialog.result_instruments_set),
                 "allow_shorting": bool(dialog.result_allow_shorting),
                 "use_adj_close": bool(dialog.result_use_adj_close),
-                # "optimization_target": cls.OPTIMIZATION_TARGET_INTERNAL # Not strictly needed in state as it's fixed by class type
+                "update_enabled": False,
+                "update_interval_value": int(dialog.update_interval_value_var.get()),
+                "update_interval_unit": dialog.update_interval_unit_var.get(),
             }
             try:
                 _ = cls(**new_state) 
@@ -186,16 +236,25 @@ class MaxSharpeConfigDialog(simpledialog.Dialog):
                  initial_name: str,
                  initial_instruments_list: List[str],
                  initial_allow_shorting: bool,
-                 initial_use_adj_close: bool):
+                 initial_use_adj_close: bool,
+                 initial_update_enabled: bool,
+                 initial_update_interval_value: int,
+                 initial_update_interval_unit: str):
         
         self.initial_name = initial_name
         self.initial_instruments_list = initial_instruments_list
         self.initial_allow_shorting = initial_allow_shorting
         self.initial_use_adj_close = initial_use_adj_close
+        self.initial_update_enabled = initial_update_enabled
+        self.initial_update_interval_value = initial_update_interval_value
+        self.initial_update_interval_unit = initial_update_interval_unit
 
         self.name_var = tk.StringVar(value=self.initial_name)
         self.allow_shorting_var = tk.BooleanVar(value=self.initial_allow_shorting)
         self.use_adj_close_var = tk.BooleanVar(value=self.initial_use_adj_close)
+        self.update_enabled_var = tk.BooleanVar(value=self.initial_update_enabled)
+        self.update_interval_value_var = tk.StringVar(value=str(self.initial_update_interval_value))
+        self.update_interval_unit_var = tk.StringVar(value=self.initial_update_interval_unit)
         
         self.instrument_manager_widget: Optional[InstrumentListManagerWidget] = None
         self.result_is_ok: bool = False
@@ -203,7 +262,6 @@ class MaxSharpeConfigDialog(simpledialog.Dialog):
         self.result_instruments_set: Optional[Set[str]] = None
         self.result_allow_shorting: bool = False
         self.result_use_adj_close: bool = True
-        
         super().__init__(parent, title)
 
     def body(self, master_frame: tk.Frame) -> tk.Entry | None:
@@ -232,6 +290,19 @@ class MaxSharpeConfigDialog(simpledialog.Dialog):
             initial_instruments_list=self.initial_instruments_list
         )
         self.instrument_manager_widget.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Dynamic update configuration
+        # Layout: <checkbox> <label 'Update each:'> <entry> <dropdown>
+        update_frame = ttk.Frame(master_frame)
+        update_frame.pack(side="top", fill="x", pady=(5, 0))
+        self.update_check = ttk.Checkbutton(update_frame, text="Enable Dynamic Update", variable=self.update_enabled_var)
+        self.update_check.pack(side="left", padx=(0,5))
+        ttk.Label(update_frame, text="Update each:").pack(side="left", padx=(5,2))
+        self.update_interval_entry = ttk.Entry(update_frame, textvariable=self.update_interval_value_var, width=5)
+        self.update_interval_entry.pack(side="left")
+        self.update_interval_unit_combo = ttk.Combobox(update_frame, textvariable=self.update_interval_unit_var, state="readonly", values=["days", "weeks", "months"], width=10)
+        self.update_interval_unit_combo.pack(side="left", padx=(2,0))
+        self.update_interval_unit_combo.current(["days", "weeks", "months"].index(self.initial_update_interval_unit))
         
         return self.name_entry
 
