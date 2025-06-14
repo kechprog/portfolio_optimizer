@@ -36,7 +36,7 @@ class MaxSharpeAllocator(PortfolioAllocator):
         current_state['use_adj_close'] = self._use_adj_close
         return current_state
 
-    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date) -> Portfolio:
+    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date, test_end_date: date) -> Portfolio:
         portfolio = Portfolio(start_date=fitting_start_date)
         current_instruments = self.get_instruments()
 

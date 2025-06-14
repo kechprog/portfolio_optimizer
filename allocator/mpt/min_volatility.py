@@ -45,7 +45,7 @@ class MinVolatilityAllocator(PortfolioAllocator):
         current_state['target_return_value'] = self._target_return_value
         return current_state
 
-    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date) -> Portfolio:
+    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date, test_end_date: date) -> Portfolio:
         portfolio = Portfolio(start_date=fitting_start_date)
         current_instruments = self.get_instruments()
 

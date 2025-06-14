@@ -83,7 +83,7 @@ class PortfolioAllocator(ABC):
         pass
 
     @abstractmethod
-    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date) -> Portfolio:
+    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date, test_end_date: date) -> Portfolio:
         """
         Computes the portfolio allocations based on the allocator's current state
         and the given fitting period, returning a Portfolio object.

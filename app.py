@@ -32,6 +32,30 @@ GEAR_ICON = "\u2699"
 DELETE_ICON = "\u2716"
 SAVE_STATE_FILENAME = "portfolio_app_state.json"
 
+# Dialog for duplicating allocator with type drop-down and name entry
+class DuplicateAllocatorDialog(simpledialog.Dialog):
+    def __init__(self, parent, title, type_names, current_type, initial_name):
+        self.type_names = type_names
+        self.current_type = current_type
+        self.initial_name = initial_name
+        self.result = None
+        super().__init__(parent, title)
+
+    def body(self, master):
+        ttk.Label(master, text="Allocator Type:").grid(row=0, column=0, sticky='w')
+        self.type_var = tk.StringVar(value=self.current_type)
+        self.type_combo = ttk.Combobox(master, textvariable=self.type_var, values=self.type_names, state='readonly')
+        self.type_combo.grid(row=0, column=1, padx=5, pady=5)
+        ttk.Label(master, text="Name:").grid(row=1, column=0, sticky='w')
+        self.name_var = tk.StringVar(value=self.initial_name)
+        self.name_entry = ttk.Entry(master, textvariable=self.name_var)
+        self.name_entry.grid(row=1, column=1, padx=5, pady=5)
+        return self.name_entry
+
+    def apply(self):
+        self.result = (self.type_var.get(), self.name_var.get())
+
+
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -109,6 +133,12 @@ class App:
         self.fit_end_date_entry = ttk.Entry(date_config_frame, width=12)
         self.fit_end_date_entry.grid(row=1, column=1, sticky="ew")
         self.fit_end_date_entry.insert(0, (date.today() - timedelta(days=30)).strftime("%Y-%m-%d"))
+        
+        ttk.Label(date_config_frame, text="Test End:").grid(row=2, column=0, sticky="w", padx=(0,2))
+        self.test_end_date_entry = ttk.Entry(date_config_frame, width=12)
+        self.test_end_date_entry.grid(row=2, column=1, sticky="ew")
+        self.test_end_date_entry.insert(0, date.today().strftime("%Y-%m-%d"))
+
         date_config_frame.grid_columnconfigure(1, weight=1)
 
         alloc_display_outer_frame = ttk.LabelFrame(self.top_right_controls_frame, text="Selected Allocator Details", padding=5)
@@ -188,7 +218,7 @@ class App:
 
             # New duplicate button
             duplicate_btn = ttk.Button(row_frame, text="5D3", width=3, style="Toolbutton.TButton",
-                                       command=lambda aid=allocator_id: self._on_duplicate_allocator(aid))
+                                       command=lambda aid=allocator_id: self._on_duplicate_allocator_prompt(aid))
             duplicate_btn.pack(side="left", padx=2)
 
             del_btn = ttk.Button(row_frame, text=DELETE_ICON, width=3, style="Danger.Toolbutton.TButton",
@@ -300,30 +330,44 @@ class App:
         else:
             messagebox.showerror("Error", "Allocator not found for deletion.", parent=self.root)
 
-    def _on_duplicate_allocator(self, allocator_id_to_duplicate: str):
-        if allocator_id_to_duplicate not in self.allocators_store:
+    def _on_duplicate_allocator_prompt(self, allocator_id_to_duplicate: str):
+        """
+        Prompt with a drop-down to select allocator type and an entry to specify the new name.
+        """
+        data = self.allocators_store.get(allocator_id_to_duplicate)
+        if not data:
             messagebox.showerror("Duplicate Error", "Allocator not found for duplication.", parent=self.root)
             return
 
-        original_data = self.allocators_store[allocator_id_to_duplicate]
-        original_instance = original_data['instance']
+        original_instance = data['instance']
         original_state = original_instance.get_state()
-        AllocatorClass = type(original_instance)
 
-        new_state = dict(original_state)  # shallow copy
-        original_name = original_state.get('name', 'Unnamed Allocator')
-        new_name = original_name + " (copy)"
+        # Determine current allocator type name
+        current_type = None
+        for type_name, cls in self.available_allocator_types.items():
+            if isinstance(original_instance, cls):
+                current_type = type_name
+                break
+        type_names = list(self.available_allocator_types.keys())
+        initial_name = original_state.get('name', '') + " (copy)"
 
-        # Check if new_name conflicts with existing allocator names
-        existing_names = {data['instance'].get_name().lower() for data in self.allocators_store.values()}
-        suffix_count = 1
-        proposed_name = new_name
-        while proposed_name.lower() in existing_names:
-            suffix_count += 1
-            proposed_name = f"{new_name} {suffix_count}"
-        new_state['name'] = proposed_name
+        # Show dialog
+        dialog = DuplicateAllocatorDialog(
+            self.root,
+            "Duplicate Allocator",
+            type_names,
+            current_type,
+            initial_name
+        )
+        if not dialog.result:
+            self.set_status("Allocator duplication cancelled.")
+            return
+        chosen_type, new_name = dialog.result
 
+        new_state = dict(original_state)
+        new_state['name'] = new_name
         try:
+            AllocatorClass = self.available_allocator_types[chosen_type]
             new_instance = AllocatorClass(**new_state)
         except Exception as e:
             messagebox.showerror("Duplicate Error", f"Failed to duplicate allocator: {e}", parent=self.root)
@@ -334,7 +378,7 @@ class App:
             'instance': new_instance,
             'is_enabled_var': tk.BooleanVar(value=True)
         }
-        self.set_status(f"Allocator '{proposed_name}' duplicated.", success=True)
+        self.set_status(f"Allocator '{new_name}' duplicated as {chosen_type}.", success=True)
         self._redraw_allocator_list_ui()
         self._refresh_allocations_display_area()
 
@@ -344,18 +388,18 @@ class App:
 
         fitting_start_dt = self.parse_date_entry(self.fit_start_date_entry, "Fit Start Date")
         fitting_end_dt = self.parse_date_entry(self.fit_end_date_entry, "Fit End Date")
-        if not fitting_start_dt or not fitting_end_dt: return
+        plot_actual_end_dt = self.parse_date_entry(self.test_end_date_entry, "Test End")
+        if not fitting_start_dt or not fitting_end_dt or not plot_actual_end_dt: return
 
         if fitting_start_dt >= fitting_end_dt:
             messagebox.showerror("Date Error", "Fit Start Date must be before Fit End Date.", parent=self.root)
             return
         
         plot_start_dt = fitting_end_dt 
-        plot_actual_end_dt = date.today()
 
         if plot_start_dt >= plot_actual_end_dt:
             messagebox.showerror("Date Error", 
-                                 f"Fit End Date ({plot_start_dt.strftime('%Y-%m-%d')}) must be before today ({plot_actual_end_dt.strftime('%Y-%m-%d')}) to plot performance.", 
+                                 f"Fit End Date ({plot_start_dt.strftime('%Y-%m-%d')}) must be before Test End Date ({plot_actual_end_dt.strftime('%Y-%m-%d')}) to plot performance.", 
                                  parent=self.root)
             self.ax.clear()
             self._setup_plot_axes_appearance()
@@ -374,7 +418,7 @@ class App:
                 allocator._last_computed_portfolio = None # Clear previous
                 try:
                     # compute_allocations now returns a Portfolio object
-                    computed_portfolio = allocator.compute_allocations(fitting_start_dt, fitting_end_dt)
+                    computed_portfolio = allocator.compute_allocations(fitting_start_dt, fitting_end_dt, plot_actual_end_dt)
                     
                     if not isinstance(computed_portfolio, Portfolio):
                         logger.error(f"Allocator {allocator.get_name()} did not return a Portfolio object. Type: {type(computed_portfolio)}")
@@ -605,6 +649,7 @@ class App:
         state = {
             "fit_start_date": self.fit_start_date_entry.get(),
             "fit_end_date": self.fit_end_date_entry.get(),
+            "test_end_date": self.test_end_date_entry.get(),
             "allocators": [],
             "plot_dividends": self.plot_dividends_var.get(),
             "window_geometry": self.root.geometry()
@@ -655,6 +700,8 @@ class App:
             self.fit_start_date_entry.insert(0, state.get("fit_start_date", (date.today() - timedelta(days=365*2)).strftime("%Y-%m-%d")))
             self.fit_end_date_entry.delete(0, tk.END)
             self.fit_end_date_entry.insert(0, state.get("fit_end_date", (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")))
+            self.test_end_date_entry.delete(0, tk.END)
+            self.test_end_date_entry.insert(0, state.get("test_end_date", date.today().strftime("%Y-%m-%d")))
 
             if state.get("plot_dividends", False):
                 self.plot_dividends_var.set(True); self.plot_dividends_checkbox.state(['selected'])
@@ -805,7 +852,8 @@ class App:
         try:
             start_dt_str = self.fit_end_date_entry.get() 
             start_dt = datetime.strptime(start_dt_str, "%Y-%m-%d").date()
-            end_dt = date.today()
+            end_dt_str = self.test_end_date_entry.get()
+            end_dt = datetime.strptime(end_dt_str, "%Y-%m-%d").date()
             if start_dt < end_dt: 
                 self.ax.set_xlim(start_dt, end_dt)
             else: 
