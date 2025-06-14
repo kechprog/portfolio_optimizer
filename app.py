@@ -112,8 +112,6 @@ class App:
         action_button_bar.pack(pady=(0,10), fill="x")
         self.global_update_button = ttk.Button(action_button_bar, text="FIT & PLOT", command=self._on_global_update_button_click, style="Accent.TButton")
         self.global_update_button.pack(side="left", fill="x", expand=True, ipady=5, padx=(0,2))
-        self.save_state_button = ttk.Button(action_button_bar, text="SAVE STATE", command=self._save_application_state, style="Info.TButton")
-        self.save_state_button.pack(side="left", fill="x", expand=True, ipady=5, padx=(2,0))
         
         self.plot_dividends_var = tk.BooleanVar(value=False)
         self.plot_dividends_checkbox = ttk.Checkbutton(self.top_right_controls_frame, 
@@ -809,22 +807,23 @@ class App:
         else: self.status_bar.config(foreground="black", background=ttk.Style().lookup('TLabel', 'background'))
 
     def _on_window_closing(self):
-        try:
-            existing_state = {}
-            if os.path.exists(SAVE_STATE_FILENAME):
-                try:
-                    with open(SAVE_STATE_FILENAME, 'r') as f:
-                        existing_state = json.load(f)
-                except (IOError, json.JSONDecodeError) as e:
-                    logger.warning(f"Could not load existing state on close to save geometry: {e}")
-            
-            existing_state["window_geometry"] = self.root.geometry()
-            
-            with open(SAVE_STATE_FILENAME, 'w') as f:
-                json.dump(existing_state, f, indent=4, default=lambda o: list(o) if isinstance(o, set) else o)
-        except Exception as e:
-            logger.error(f"Error saving window geometry on close: {e}", exc_info=True)
-        finally:
+        """
+        Prompt the user on exit whether to save or discard current state.
+        """
+        choice = messagebox.askyesnocancel(
+            "Exit",
+            "Do you want to save changes to your portfolio before exiting?\n\nYes = Save and exit\nNo = Discard and exit\nCancel = Stay in app.",
+            parent=self.root
+        )
+        if choice is None:
+            # Cancel, do nothing
+            return
+        elif choice is True:
+            # Save state then exit
+            self._save_application_state()
+            self.root.destroy()
+        else:
+            # Discard changes and exit (just exit, do NOT save)
             self.root.destroy()
 
 if __name__ == "__main__":

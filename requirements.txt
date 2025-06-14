@@ -1,10 +1,5 @@
-matplotlib
 pandas
-yfinance
+matplotlib
+requests
 python-dotenv
-numpy
-pyportfolioopt
-scikit-learn
 alpha-vantage
-pillow
-pyinstaller

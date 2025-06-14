@@ -1,3 +1,4 @@
+
 from datetime import date, timedelta
 from typing import List, Dict, Any, Optional
 import pandas as pd
@@ -123,4 +124,44 @@ class Portfolio:
 
         # Single plot call
         ax.plot(dates_all, values_all, linestyle='-', label=label)
-        # Caller handles legend and formatting
+
+    def plot_distribution(self, ax: Any, end_date: date):
+        """
+        Plots the distribution of the portfolio's assets over time.
+
+        Args:
+            ax: A matplotlib Axes object to draw on.
+            end_date: The date up to which to plot.
+        """
+        segments = self.get(end_date)
+        if not segments:
+            return
+
+        # Create a DataFrame to hold the allocation history
+        dates = sorted(list(set([seg['start_date'] for seg in segments] + [end_date])))
+        all_tickers = sorted(list(set(ticker for seg in segments for ticker in seg['allocations'])))        
+        alloc_df = pd.DataFrame(index=dates, columns=all_tickers, data=0.0)
+
+        for seg in segments:
+            for ticker, weight in seg['allocations'].items():
+                alloc_df.loc[seg['start_date']:seg['end_date'], ticker] = weight*100
+
+        # Plot the stacked area chart
+        ax.stackplot(alloc_df.index, alloc_df.T, labels=alloc_df.columns)
+        ax.set_ylim(0, 100)
+        ax.set_ylabel("Allocation (%)")
+        ax.legend(loc='upper left')
+
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+
+    # Create a portfolio
+    portfolio = Portfolio(start_date=date(2023, 1, 1))
+    portfolio.append(date(2023, 6, 30), {'AAPL': 0.5, 'GOOG': 0.5})
+    portfolio.append(date(2023, 12, 31), {'AAPL': 0.3, 'GOOG': 0.3, 'MSFT': 0.4})
+
+    # Plot the distribution
+    fig, ax = plt.subplots(figsize=(10, 6))
+    portfolio.plot_distribution(ax, date(2023, 12, 31))
+    ax.set_title("Portfolio Allocation Distribution")
+    plt.savefig('distribution_plot.png')
