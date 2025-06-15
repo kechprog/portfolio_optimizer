@@ -204,20 +204,29 @@ class ManualAllocator(PortfolioAllocator):
         logger.info(f"ManualAllocator configuration/creation cancelled for '{initial_name}'.")
         return None
 
-    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date) -> Dict[str, float]:
+    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date, test_end_date: date) -> Portfolio:
+        """
+        Computes allocations and returns them within a Portfolio object.
+        For ManualAllocator, this involves creating a single segment in the portfolio
+        that spans from fitting_end_date to test_end_date with the stored manual allocations.
+        """
+        portfolio = Portfolio(start_date=fitting_end_date)
         current_instruments = self.get_instruments()
-        # Use the internally stored allocations
         manual_allocs: Dict[str, float] = {
             inst: self._allocations.get(inst, 0.0) for inst in current_instruments
         }
-        current_sum = sum(computed_allocs.values())
-        if computed_allocs and abs(current_sum - 1.0) > 1e-7:
-             logger.warning(f"({self.get_name()}): Allocations sum to {current_sum:.2f}%, not 100%. This might be as configured.")
-        
-        logger.info(f"({self.get_name()}): Returning configured allocations: {computed_allocs}. Fitting dates [{fitting_start_date} to {fitting_end_date}] unused.")
-        return computed_allocs.copy()
 
->>>>>>> afba0ac (architecture revamp)
+        if test_end_date > fitting_end_date:
+            portfolio.append(end_date=test_end_date, allocations=manual_allocs)
+            logger.info(f"({self.get_name()}): Created Portfolio segment from {fitting_end_date} to {test_end_date} with allocations: {manual_allocs}")
+        else:
+            logger.warning(f"({self.get_name()}): test_end_date ({test_end_date}) is not after fitting_end_date ({fitting_end_date}). Returning empty portfolio.")
+
+        current_sum = sum(manual_allocs.values())
+        if manual_allocs and abs(current_sum - 1.0) > 1e-7:
+             logger.warning(f"({self.get_name()}): Allocations for the segment sum to {current_sum:.2f}%, not 100%. This might be as configured.")
+        
+        return portfolio
 
 class ManualAllocationDialog(simpledialog.Dialog):
     def __init__(self, parent, title: str, 
@@ -766,4 +775,3 @@ class ManualAllocationDialog(simpledialog.Dialog):
 =======
         self.bind("<Return>", self.ok); self.bind("<Escape>", self.cancel)
         box.pack(side=tk.BOTTOM, pady=5)
->>>>>>> 3d44c10 (cleanup and better ui)
