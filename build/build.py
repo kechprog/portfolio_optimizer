@@ -10,7 +10,7 @@ ICON_PATH = str(BASE_DIR / "icon.png")  # Path to your application icon
 print(ICON_PATH)
 ENV_PATH = str(BASE_DIR / ".env")  # Path to your environment file
 APP_NAME = "PortfolioOptimizer"
-MAIN_SCRIPT = "app.py"
+MAIN_SCRIPT = "../app.py"
 TEMP_DIR = "build_temp"
 
 # PyInstaller options
