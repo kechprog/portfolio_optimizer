@@ -12,6 +12,7 @@ import pandas as pd
 import uuid
 import json
 import os
+import platform
 import logging # Added logging
 from typing import Optional, Set, Dict, Type, Any, List, Tuple
 
@@ -31,6 +32,79 @@ logger = logging.getLogger(__name__)
 GEAR_ICON = "\u2699"
 DELETE_ICON = "\u2716"
 SAVE_STATE_FILENAME = "portfolio_app_state.json"
+
+def _is_windows() -> bool:
+    """Check if running on Windows"""
+    return platform.system() == "Windows"
+
+def _is_dark_mode() -> bool:
+    """Detect if Windows is using dark mode"""
+    if not _is_windows():
+        return False
+    
+    try:
+        import winreg
+        registry = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
+        key = winreg.OpenKey(registry, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+        winreg.CloseKey(key)
+        return value == 0  # 0 = dark mode, 1 = light mode
+    except Exception as e:
+        logger.info(f"Could not detect Windows theme: {e}")
+        return False  # Default to light mode if detection fails
+
+def _setup_windows_theme(root: tk.Tk) -> bool:
+    """Setup Windows 11-style theme if on Windows"""
+    if not _is_windows():
+        return False
+    
+    try:
+        import sv_ttk
+        
+        # Detect system theme
+        is_dark = _is_dark_mode()
+        
+        # Apply the theme
+        if is_dark:
+            sv_ttk.set_theme("dark")
+            logger.info("Applied dark Windows 11 theme")
+        else:
+            sv_ttk.set_theme("light") 
+            logger.info("Applied light Windows 11 theme")
+        
+        return True
+        
+    except ImportError:
+        logger.warning("sv-ttk not available, falling back to default theme")
+        return False
+    except Exception as e:
+        logger.error(f"Error setting up Windows theme: {e}")
+        return False
+
+def _setup_matplotlib_theme_colors(is_dark_theme: bool = False):
+    """Configure matplotlib colors to match the theme"""
+    try:
+        import matplotlib.pyplot as plt
+        
+        if is_dark_theme:
+            # Dark theme colors
+            plt.style.use('dark_background')
+            return {
+                'bg_color': '#2b2b2b',
+                'text_color': '#ffffff',
+                'grid_color': '#404040'
+            }
+        else:
+            # Light theme colors (default)
+            plt.rcParams.update(plt.rcParamsDefault)  # Reset to defaults
+            return {
+                'bg_color': '#ffffff',
+                'text_color': '#000000', 
+                'grid_color': '#cccccc'
+            }
+    except Exception as e:
+        logger.error(f"Error configuring matplotlib theme: {e}")
+        return None
 
 # Dialog for duplicating allocator with type drop-down and name entry
 class DuplicateAllocatorDialog(simpledialog.Dialog):
@@ -149,9 +223,8 @@ class PortfolioInfo(ttk.Frame):
                        borderwidth=1,
                        relief="solid")
         
-        # Configure alternating row colors
-        self.tree.tag_configure('evenrow', background='#f0f0f0')
-        self.tree.tag_configure('oddrow', background='white')
+        # Configure alternating row colors based on theme
+        self._configure_table_row_colors()
         
         # Add scrollbar to table
         self.table_scrollbar = ttk.Scrollbar(table_area, orient="vertical", command=self.tree.yview)
@@ -160,6 +233,32 @@ class PortfolioInfo(ttk.Frame):
         # Pack table and scrollbar
         self.tree.pack(side="left", fill="both", expand=True)
         self.table_scrollbar.pack(side="right", fill="y")
+    
+    def _configure_table_row_colors(self):
+        """Configure table row colors based on current theme"""
+        if self.app_instance and hasattr(self.app_instance, 'is_dark_mode'):
+            is_dark = self.app_instance.is_dark_mode
+            
+            if is_dark:
+                # Dark theme row colors
+                self.tree.tag_configure('evenrow', 
+                                      background='#3c3c3c', 
+                                      foreground='#ffffff')
+                self.tree.tag_configure('oddrow', 
+                                      background='#2d2d2d', 
+                                      foreground='#ffffff')
+            else:
+                # Light theme row colors
+                self.tree.tag_configure('evenrow', 
+                                      background='#f0f0f0', 
+                                      foreground='#000000')
+                self.tree.tag_configure('oddrow', 
+                                      background='#ffffff', 
+                                      foreground='#000000')
+        else:
+            # Fallback colors (light theme)
+            self.tree.tag_configure('evenrow', background='#f0f0f0')
+            self.tree.tag_configure('oddrow', background='white')
         
         # Navigation controls (bottom part of table frame)
         nav_frame = ttk.Frame(self.table_frame)
@@ -198,10 +297,35 @@ class PortfolioInfo(ttk.Frame):
         self.dist_canvas_widget = self.dist_canvas.get_tk_widget()
         self.dist_canvas_widget.pack(fill=tk.BOTH, expand=True)
         
-        # Style the plot
-        self.dist_ax.set_ylabel("Allocation (%)")
-        self.dist_ax.set_title("Portfolio Distribution")
-        self.dist_ax.grid(True, linestyle=':', alpha=0.7)
+        # Style the plot with theme colors
+        self._apply_graph_theme_styling()
+    
+    def _apply_graph_theme_styling(self):
+        """Apply theme-appropriate styling to the distribution graph"""
+        if self.app_instance and hasattr(self.app_instance, 'is_dark_mode'):
+            is_dark = self.app_instance.is_dark_mode
+            
+            if is_dark:
+                # Dark theme styling
+                self.dist_fig.patch.set_facecolor('#1e1e1e')
+                self.dist_ax.set_facecolor('#2b2b2b')
+                self.dist_ax.tick_params(colors='#ffffff')
+                self.dist_ax.set_ylabel("Allocation (%)", color='#ffffff')
+                self.dist_ax.set_title("Portfolio Distribution", color='#ffffff')
+                self.dist_ax.grid(True, linestyle=':', alpha=0.3, color='#606060')
+            else:
+                # Light theme styling
+                self.dist_fig.patch.set_facecolor('#ffffff')
+                self.dist_ax.set_facecolor('#ffffff')
+                self.dist_ax.tick_params(colors='#000000')
+                self.dist_ax.set_ylabel("Allocation (%)", color='#000000')
+                self.dist_ax.set_title("Portfolio Distribution", color='#000000')
+                self.dist_ax.grid(True, linestyle=':', alpha=0.7, color='#cccccc')
+        else:
+            # Fallback styling
+            self.dist_ax.set_ylabel("Allocation (%)")
+            self.dist_ax.set_title("Portfolio Distribution")
+            self.dist_ax.grid(True, linestyle=':', alpha=0.7)
     
     def _on_show_graph_changed(self):
         """Handle the show graph checkbox change"""
@@ -301,6 +425,9 @@ class PortfolioInfo(ttk.Frame):
             # Plot the distribution progression up to test_end_date
             self.portfolio.plot_distribution(self.dist_ax, test_end_date)
             
+            # Apply theme styling after plotting
+            self._apply_graph_theme_styling()
+            
             # Update header for graph view
             portfolio_start_date = self.portfolio.segments[0].get('start_date')
             if hasattr(portfolio_start_date, 'strftime') and hasattr(test_end_date, 'strftime'):
@@ -310,7 +437,7 @@ class PortfolioInfo(ttk.Frame):
             else:
                 self.header_label.config(text="Portfolio Distribution")
             
-            # Update the plot title
+            # Update the plot title with theme-appropriate color
             self.dist_ax.set_title("Portfolio Allocation Progression", fontsize=10)
             self.dist_fig.tight_layout()
             self.dist_canvas.draw()
@@ -318,9 +445,13 @@ class PortfolioInfo(ttk.Frame):
         except Exception as e:
             # Handle any errors in graph generation
             self.dist_ax.clear()
+            self._apply_graph_theme_styling()
+            
+            # Apply theme colors to error text
+            text_color = '#ffffff' if (self.app_instance and hasattr(self.app_instance, 'is_dark_mode') and self.app_instance.is_dark_mode) else '#000000'
             self.dist_ax.text(0.5, 0.5, f"Error generating graph:\n{str(e)}", 
                              ha='center', va='center', transform=self.dist_ax.transAxes, 
-                             fontsize=10, wrap=True)
+                             fontsize=10, wrap=True, color=text_color)
             self.dist_canvas.draw()
             
             # Update header to show error state
@@ -334,9 +465,7 @@ class PortfolioInfo(ttk.Frame):
     def _clear_graph_data(self):
         """Clear the graph display"""
         self.dist_ax.clear()
-        self.dist_ax.set_ylabel("Allocation (%)")
-        self.dist_ax.set_title("Portfolio Distribution")
-        self.dist_ax.grid(True, linestyle=':', alpha=0.7)
+        self._apply_graph_theme_styling()
         self.dist_ax.text(0.5, 0.5, "No data to display", 
                          ha='center', va='center', transform=self.dist_ax.transAxes, 
                          fontsize=12, style='italic')
@@ -492,6 +621,11 @@ class App:
         self.root.title("Portfolio Allocation Tool")
         self.root.geometry("1200x800")
         self.root.protocol("WM_DELETE_WINDOW", self._on_window_closing)
+
+        # Theme setup
+        self.is_windows_theme = _setup_windows_theme(root)
+        self.is_dark_mode = _is_dark_mode() if _is_windows() else False
+        self.matplotlib_colors = _setup_matplotlib_theme_colors(self.is_dark_mode)
 
         # self.current_instruments_set: Set[str] = set() # REMOVED - managed per allocator
 
@@ -650,7 +784,7 @@ class App:
             config_btn.pack(side="left", padx=2)
 
             # New duplicate button
-            duplicate_btn = ttk.Button(row_frame, text="5D3", width=3, style="Toolbutton.TButton",
+            duplicate_btn = ttk.Button(row_frame, text="⧉", width=3, style="Toolbutton.TButton",
                                        command=lambda aid=allocator_id: self._on_duplicate_allocator_prompt(aid))
             duplicate_btn.pack(side="left", padx=2)
 
@@ -1186,7 +1320,33 @@ class App:
         self.ax.set_xlabel("Date")
         self.ax.set_ylabel("Cumulative Performance (%)")
         self.ax.set_title("Portfolio Performance (Out-of-Sample)")
-        self.ax.grid(True, linestyle=':', alpha=0.7)
+        
+        # Apply theme-appropriate colors if available
+        if self.matplotlib_colors:
+            if self.is_dark_mode:
+                # Dark theme styling
+                self.ax.set_facecolor('#2b2b2b')
+                self.ax.tick_params(colors='#ffffff')
+                self.ax.xaxis.label.set_color('#ffffff')
+                self.ax.yaxis.label.set_color('#ffffff')
+                self.ax.title.set_color('#ffffff')
+                self.ax.grid(True, linestyle=':', alpha=0.3, color='#606060')
+                # Set figure background
+                self.fig.patch.set_facecolor('#1e1e1e')
+            else:
+                # Light theme styling (reset to defaults)
+                self.ax.set_facecolor('#ffffff')
+                self.ax.tick_params(colors='#000000')
+                self.ax.xaxis.label.set_color('#000000')
+                self.ax.yaxis.label.set_color('#000000')
+                self.ax.title.set_color('#000000')
+                self.ax.grid(True, linestyle=':', alpha=0.7, color='#cccccc')
+                # Set figure background
+                self.fig.patch.set_facecolor('#ffffff')
+        else:
+            # Fallback to default styling
+            self.ax.grid(True, linestyle=':', alpha=0.7)
+        
         self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
         self.ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=5, maxticks=12, interval_multiples=True))
         self.ax.yaxis.set_major_formatter(mtick.PercentFormatter())
@@ -1245,21 +1405,68 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s') # Basic logging config
     multiprocessing.freeze_support() 
     root = tk.Tk()
-    style = ttk.Style()
-    if 'clam' in style.theme_names(): 
-        style.theme_use('clam')
-
-    style.configure("Error.TEntry", foreground="red", fieldbackground="#FFEEEE")
-    style.configure("Accent.TButton", font=('Helvetica', 9, 'bold'), padding=4)
-    style.configure("Info.TButton", font=('Helvetica', 9), padding=4)
-    style.configure("Success.TButton", foreground="white", background="#28a745", font=('Helvetica', 9, 'normal'), borderwidth=1, relief="raised")
-    style.map("Success.TButton", background=[('active', '#218838'), ('pressed', '#1e7e34')], relief=[('pressed', 'sunken')])
-    style.configure("Danger.TButton", foreground="white", background="#dc3545", font=('Helvetica', 9, 'normal'), borderwidth=1, relief="raised")
-    style.map("Danger.TButton", background=[('active', '#c82333'), ('pressed', '#b21f2d')], relief=[('pressed', 'sunken')])
-    style.configure("Toolbutton.TButton", padding=2, relief="flat", font=('Arial', 10))
-    style.map("Toolbutton.TButton", relief=[('pressed', 'sunken'), ('hover', 'groove'), ('!pressed', 'flat')], background=[('active', '#e0e0e0')])
-    style.configure("Danger.Toolbutton.TButton", foreground="#c00000", padding=2, relief="flat", font=('Arial', 10))
-    style.map("Danger.Toolbutton.TButton", relief=[('pressed', 'sunken'), ('hover', 'groove'), ('!pressed', 'flat')], foreground=[('pressed', 'darkred'), ('hover', 'red'), ('!pressed', '#c00000')], background=[('active', '#fde0e0')])
-
+    
+    # Create app instance (which handles theme setup)
     app_instance = App(root)
+    
+    # Apply custom button styles after theme is set
+    style = ttk.Style()
+    
+    # Check if we're using Windows theme or fallback
+    if not app_instance.is_windows_theme:
+        # Fallback to clam theme if Windows theme not available
+        if 'clam' in style.theme_names(): 
+            style.theme_use('clam')
+    
+    # Configure custom button styles (these work with both themes)
+    try:
+        # Error entry style
+        style.configure("Error.TEntry", foreground="red", fieldbackground="#FFEEEE")
+        
+        # Button styles that adapt to the current theme
+        style.configure("Accent.TButton", font=('Helvetica', 9, 'bold'), padding=4)
+        style.configure("Info.TButton", font=('Helvetica', 9), padding=4)
+        
+        # Success button (green)
+        style.configure("Success.TButton", 
+                       foreground="white", 
+                       background="#28a745", 
+                       font=('Helvetica', 9, 'normal'), 
+                       borderwidth=1, 
+                       relief="raised")
+        style.map("Success.TButton", 
+                 background=[('active', '#218838'), ('pressed', '#1e7e34')], 
+                 relief=[('pressed', 'sunken')])
+        
+        # Danger button (red)
+        style.configure("Danger.TButton", 
+                       foreground="white", 
+                       background="#dc3545", 
+                       font=('Helvetica', 9, 'normal'), 
+                       borderwidth=1, 
+                       relief="raised")
+        style.map("Danger.TButton", 
+                 background=[('active', '#c82333'), ('pressed', '#b21f2d')], 
+                 relief=[('pressed', 'sunken')])
+        
+        # Tool buttons
+        style.configure("Toolbutton.TButton", padding=2, relief="flat", font=('Arial', 10))
+        style.map("Toolbutton.TButton", 
+                 relief=[('pressed', 'sunken'), ('hover', 'groove'), ('!pressed', 'flat')], 
+                 background=[('active', '#e0e0e0')])
+        
+        # Danger tool button
+        style.configure("Danger.Toolbutton.TButton", 
+                       foreground="#c00000", 
+                       padding=2, 
+                       relief="flat", 
+                       font=('Arial', 10))
+        style.map("Danger.Toolbutton.TButton", 
+                 relief=[('pressed', 'sunken'), ('hover', 'groove'), ('!pressed', 'flat')], 
+                 foreground=[('pressed', 'darkred'), ('hover', 'red'), ('!pressed', '#c00000')], 
+                 background=[('active', '#fde0e0')])
+                 
+    except Exception as e:
+        logger.warning(f"Could not apply custom button styles: {e}")
+
     root.mainloop()

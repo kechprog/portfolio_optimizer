@@ -3,3 +3,4 @@ matplotlib
 requests
 python-dotenv
 alpha-vantage
+sv-ttk
