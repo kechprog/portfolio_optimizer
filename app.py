@@ -77,34 +77,92 @@ class PortfolioInfo(ttk.Frame):
         main_container = ttk.Frame(self)
         main_container.pack(fill="both", expand=True, padx=5, pady=5)
         
-        # Header with interval information (centered)
-        self.header_label = ttk.Label(main_container, font=("Helvetica", 10, "bold"), anchor="center")
-        self.header_label.pack(fill="x", pady=(0, 10))
+        # Header frame with date info and checkbox
+        header_frame = ttk.Frame(main_container)
+        header_frame.pack(fill="x", pady=(0, 10))
         
-        # Table frame with scrollable content
-        table_frame = ttk.Frame(main_container)
-        table_frame.pack(fill="both", expand=True, pady=(0, 10))
+        # Configure header frame columns
+        header_frame.grid_columnconfigure(0, weight=1)
+        header_frame.grid_columnconfigure(1, weight=0)
+        
+        # Centered date label
+        self.header_label = ttk.Label(header_frame, font=("Helvetica", 10, "bold"), anchor="center")
+        self.header_label.grid(row=0, column=0, sticky="ew")
+        
+        # Show graph checkbox (right side)
+        self.show_graph_var = tk.BooleanVar(value=False)
+        self.show_graph_checkbox = ttk.Checkbutton(header_frame, 
+                                                  text="Show graph", 
+                                                  variable=self.show_graph_var,
+                                                  command=self._on_show_graph_changed)
+        self.show_graph_checkbox.grid(row=0, column=1, sticky="e", padx=(10, 0))
+        
+        # Content frame that will hold either table or graph
+        self.content_frame = ttk.Frame(main_container)
+        self.content_frame.pack(fill="both", expand=True)
+        
+        # Initialize sorting state
+        self.sort_column = "Allocation"  # Default sort by allocation
+        self.sort_reverse = True  # Default to highest first
+        
+        # Create table view components (initially visible)
+        self._create_table_view()
+        
+        # Create graph view components (initially hidden)
+        self._create_graph_view()
+        
+        # Show table view by default
+        self.table_frame.pack(fill="both", expand=True)
+        
+        # Initialize display
+        self._update_display()
+    
+    def _create_table_view(self):
+        """Create the table view components with navigation"""
+        # Table frame with scrollable content and navigation
+        self.table_frame = ttk.Frame(self.content_frame)
+        
+        # Table area (top part of table frame)
+        table_area = ttk.Frame(self.table_frame)
+        table_area.pack(fill="both", expand=True, pady=(0, 10))
         
         # Create Treeview for the table
         columns = ("Instrument", "Allocation")
-        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=8)
+        self.tree = ttk.Treeview(table_area, columns=columns, show="headings", height=8)
         
-        # Configure columns
-        self.tree.heading("Instrument", text="Instrument")
-        self.tree.heading("Allocation", text="Allocation (%)")
+        # Configure columns with sorting
+        self.tree.heading("Instrument", text="Instrument", 
+                         command=lambda: self._sort_column("Instrument"))
+        self.tree.heading("Allocation", text="Allocation (%) ↓", 
+                         command=lambda: self._sort_column("Allocation"))
         self.tree.column("Instrument", width=120, anchor="w")
         self.tree.column("Allocation", width=100, anchor="e")
         
+        # Configure grid lines and alternating row colors
+        style = ttk.Style()
+        
+        # Configure the treeview to show grid lines
+        style.configure("Treeview", 
+                       borderwidth=1,
+                       relief="solid")
+        style.configure("Treeview.Heading",
+                       borderwidth=1,
+                       relief="solid")
+        
+        # Configure alternating row colors
+        self.tree.tag_configure('evenrow', background='#f0f0f0')
+        self.tree.tag_configure('oddrow', background='white')
+        
         # Add scrollbar to table
-        table_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=table_scrollbar.set)
+        self.table_scrollbar = ttk.Scrollbar(table_area, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=self.table_scrollbar.set)
         
         # Pack table and scrollbar
         self.tree.pack(side="left", fill="both", expand=True)
-        table_scrollbar.pack(side="right", fill="y")
+        self.table_scrollbar.pack(side="right", fill="y")
         
-        # Navigation controls (horizontal layout, centered)
-        nav_frame = ttk.Frame(main_container)
+        # Navigation controls (bottom part of table frame)
+        nav_frame = ttk.Frame(self.table_frame)
         nav_frame.pack(fill="x")
         
         # Center the navigation controls
@@ -125,61 +183,164 @@ class PortfolioInfo(ttk.Frame):
         self.next_button = ttk.Button(nav_center_frame, text="▶", width=3,
                                      command=self._next_segment, state="normal")
         self.next_button.pack(side="left", padx=2)
+    
+    def _create_graph_view(self):
+        """Create the graph view components"""
+        self.graph_frame = ttk.Frame(self.content_frame)
         
-        # Initialize display
-        self._update_display()
+        # Create matplotlib figure and canvas for the distribution plot
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        
+        self.dist_fig = Figure(figsize=(6, 4), dpi=80)
+        self.dist_ax = self.dist_fig.add_subplot(111)
+        self.dist_canvas = FigureCanvasTkAgg(self.dist_fig, master=self.graph_frame)
+        self.dist_canvas_widget = self.dist_canvas.get_tk_widget()
+        self.dist_canvas_widget.pack(fill=tk.BOTH, expand=True)
+        
+        # Style the plot
+        self.dist_ax.set_ylabel("Allocation (%)")
+        self.dist_ax.set_title("Portfolio Distribution")
+        self.dist_ax.grid(True, linestyle=':', alpha=0.7)
+    
+    def _on_show_graph_changed(self):
+        """Handle the show graph checkbox change"""
+        if self.show_graph_var.get():
+            # Show graph view (navigation buttons are automatically hidden with table)
+            self.table_frame.pack_forget()
+            self.graph_frame.pack(fill="both", expand=True)
+            self._update_graph_display()
+        else:
+            # Show table view (navigation buttons are automatically shown with table)
+            self.graph_frame.pack_forget()
+            self.table_frame.pack(fill="both", expand=True)
+            self._update_table_display()
 
     def _update_display(self):
         """Update the display with current segment data"""
         if not self.portfolio or not self.portfolio.segments:
             self.header_label.config(text="No portfolio segments available")
-            # Clear table
-            for item in self.tree.get_children():
-                self.tree.delete(item)
+            # Clear both views
+            self._clear_table_data()
+            self._clear_graph_data()
             self._update_button_states()
             return
+        
+        # Update the appropriate view based on checkbox state
+        if self.show_graph_var.get():
+            self._update_graph_display()
+        else:
+            # Get current segment for table view
+            current_segment = self.portfolio.segments[self.current_segment_index]
+            
+            # Update header with date range for table view
+            start_date = current_segment.get('start_date', 'Unknown')
+            end_date = current_segment.get('end_date', 'Unknown')
+            
+            if hasattr(start_date, 'strftime'):
+                start_str = start_date.strftime('%Y-%m-%d')
+            else:
+                start_str = str(start_date)
+                
+            if hasattr(end_date, 'strftime'):
+                end_str = end_date.strftime('%Y-%m-%d')
+            else:
+                end_str = str(end_date)
+            
+            self.header_label.config(text=f"From {start_str} to {end_str}")
+            self._update_table_display()
+        
+        # Update button states
+        self._update_button_states()
+    
+    def _update_table_display(self):
+        """Update the table view with current segment data"""
+        if not self.portfolio or not self.portfolio.segments:
+            return
+        
+        # Clear existing table data
+        self._clear_table_data()
         
         # Get current segment
         current_segment = self.portfolio.segments[self.current_segment_index]
         
-        # Update header with date range
-        start_date = current_segment.get('start_date', 'Unknown')
-        end_date = current_segment.get('end_date', 'Unknown')
-        
-        if hasattr(start_date, 'strftime'):
-            start_str = start_date.strftime('%Y-%m-%d')
-        else:
-            start_str = str(start_date)
-            
-        if hasattr(end_date, 'strftime'):
-            end_str = end_date.strftime('%Y-%m-%d')
-        else:
-            end_str = str(end_date)
-        
-        self.header_label.config(text=f"From {start_str} to {end_str}")
-        
-        # Clear existing table data
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-        
         # Get allocations and populate table
         allocations = current_segment.get('allocations', {})
         
-        # Sort allocations by value (descending)
-        sorted_allocations = sorted(allocations.items(), key=lambda x: abs(x[1]), reverse=True)
+        # Filter out zero allocations
+        significant_allocations = [(k, v) for k, v in allocations.items() if abs(v) > 1e-9]
         
-        # Add rows to table
-        for instrument, allocation in sorted_allocations:
-            if abs(allocation) > 1e-9:  # Only show non-zero allocations
-                percentage = allocation * 100  # Convert to percentage
-                self.tree.insert("", "end", values=(instrument, f"{percentage:.2f}%"))
+        # Sort according to current sort settings
+        self._sort_data(significant_allocations)
         
         # If no significant allocations, show a message
-        if not any(abs(alloc) > 1e-9 for alloc in allocations.values()):
+        if not significant_allocations:
             self.tree.insert("", "end", values=("No significant allocations", ""))
+    
+    def _update_graph_display(self):
+        """Update the graph view with portfolio distribution progression"""
+        if not self.portfolio or not self.portfolio.segments:
+            self._clear_graph_data()
+            return
         
-        # Update button states
-        self._update_button_states()
+        try:
+            # Get test end date from app instance
+            test_end_date = None
+            if self.app_instance:
+                test_end_date = self.app_instance.parse_date_entry(
+                    self.app_instance.test_end_date_entry, "Test End", silent=True
+                )
+            
+            if not test_end_date:
+                # Fallback to last segment end date
+                test_end_date = self.portfolio.segments[-1].get('end_date')
+            
+            # Clear the previous plot
+            self.dist_ax.clear()
+            
+            # Plot the distribution progression up to test_end_date
+            self.portfolio.plot_distribution(self.dist_ax, test_end_date)
+            
+            # Update header for graph view
+            portfolio_start_date = self.portfolio.segments[0].get('start_date')
+            if hasattr(portfolio_start_date, 'strftime') and hasattr(test_end_date, 'strftime'):
+                start_str = portfolio_start_date.strftime('%Y-%m-%d')
+                end_str = test_end_date.strftime('%Y-%m-%d')
+                self.header_label.config(text=f"Portfolio Distribution: {start_str} to {end_str}")
+            else:
+                self.header_label.config(text="Portfolio Distribution")
+            
+            # Update the plot title
+            self.dist_ax.set_title("Portfolio Allocation Progression", fontsize=10)
+            self.dist_fig.tight_layout()
+            self.dist_canvas.draw()
+            
+        except Exception as e:
+            # Handle any errors in graph generation
+            self.dist_ax.clear()
+            self.dist_ax.text(0.5, 0.5, f"Error generating graph:\n{str(e)}", 
+                             ha='center', va='center', transform=self.dist_ax.transAxes, 
+                             fontsize=10, wrap=True)
+            self.dist_canvas.draw()
+            
+            # Update header to show error state
+            self.header_label.config(text="Error displaying portfolio distribution")
+    
+    def _clear_table_data(self):
+        """Clear all data from the table"""
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+    
+    def _clear_graph_data(self):
+        """Clear the graph display"""
+        self.dist_ax.clear()
+        self.dist_ax.set_ylabel("Allocation (%)")
+        self.dist_ax.set_title("Portfolio Distribution")
+        self.dist_ax.grid(True, linestyle=':', alpha=0.7)
+        self.dist_ax.text(0.5, 0.5, "No data to display", 
+                         ha='center', va='center', transform=self.dist_ax.transAxes, 
+                         fontsize=12, style='italic')
+        self.dist_canvas.draw()
 
     def _update_button_states(self):
         """Update navigation button states based on current position"""
@@ -262,6 +423,68 @@ class PortfolioInfo(ttk.Frame):
                 self.app_instance.set_status(error_msg, error=True)
             else:
                 print(error_msg)
+
+    def _sort_column(self, column):
+        """Handle column header clicks for sorting (only works in table view)"""
+        # Only sort if we're in table view
+        if self.show_graph_var.get():
+            return
+            
+        if self.sort_column == column:
+            # Same column clicked, toggle sort order
+            self.sort_reverse = not self.sort_reverse
+        else:
+            # New column clicked
+            self.sort_column = column
+            if column == "Instrument":
+                self.sort_reverse = False  # Default to A-Z for instruments
+            else:  # Allocation
+                self.sort_reverse = True   # Default to highest first for allocations
+        
+        # Update column headers with sort indicators
+        self._update_column_headers()
+        
+        # Re-display the current data with new sort (table only)
+        self._update_table_display()
+    
+    def _update_column_headers(self):
+        """Update column headers with sort indicators"""
+        instrument_text = "Instrument"
+        allocation_text = "Allocation (%)"
+        
+        if self.sort_column == "Instrument":
+            if self.sort_reverse:
+                instrument_text += " ↑"  # Z-A (reverse alphabetical)
+            else:
+                instrument_text += " ↓"  # A-Z (normal alphabetical)
+            # allocation_text stays as "Allocation (%)" with no arrows
+        else:  # Allocation
+            if self.sort_reverse:
+                allocation_text += " ↓"  # Highest first
+            else:
+                allocation_text += " ↑"  # Lowest first
+            # instrument_text stays as "Instrument" with no arrows
+        
+        self.tree.heading("Instrument", text=instrument_text)
+        self.tree.heading("Allocation", text=allocation_text)
+    
+    def _sort_data(self, allocations_list):
+        """Sort and populate the table with data"""
+        if not allocations_list:
+            return
+        
+        if self.sort_column == "Instrument":
+            # Sort by instrument name (alphabetical)
+            sorted_data = sorted(allocations_list, key=lambda x: x[0].lower(), reverse=self.sort_reverse)
+        else:  # Sort by allocation
+            # Sort by allocation value (by absolute value for proper comparison)
+            sorted_data = sorted(allocations_list, key=lambda x: abs(x[1]), reverse=self.sort_reverse)
+        
+        # Add rows to table with alternating colors
+        for idx, (instrument, allocation) in enumerate(sorted_data):
+            percentage = allocation * 100  # Convert to percentage
+            tag = 'evenrow' if idx % 2 == 0 else 'oddrow'
+            self.tree.insert("", "end", values=(instrument, f"{percentage:.2f}%"), tags=(tag,))
 
 class App:
     def __init__(self, root: tk.Tk):
