@@ -56,6 +56,213 @@ class DuplicateAllocatorDialog(simpledialog.Dialog):
         self.result = (self.type_var.get(), self.name_var.get())
 
 
+class PortfolioInfo(ttk.Frame):
+    def __init__(self, parent, portfolio: Optional[Portfolio] = None, app_instance=None, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.portfolio = portfolio
+        self.current_segment_index = 0
+        self.app_instance = app_instance  # Reference to app for status updates
+
+        if not portfolio:
+            self._create_empty_view()
+        else:
+            self._create_portfolio_view()
+
+    def _create_empty_view(self):
+        empty_label = ttk.Label(self, text="Select Allocator", font=("Helvetica", 12, 'italic'))
+        empty_label.pack(expand=True)
+
+    def _create_portfolio_view(self):
+        # Main container with vertical layout
+        main_container = ttk.Frame(self)
+        main_container.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Header with interval information (centered)
+        self.header_label = ttk.Label(main_container, font=("Helvetica", 10, "bold"), anchor="center")
+        self.header_label.pack(fill="x", pady=(0, 10))
+        
+        # Table frame with scrollable content
+        table_frame = ttk.Frame(main_container)
+        table_frame.pack(fill="both", expand=True, pady=(0, 10))
+        
+        # Create Treeview for the table
+        columns = ("Instrument", "Allocation")
+        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=8)
+        
+        # Configure columns
+        self.tree.heading("Instrument", text="Instrument")
+        self.tree.heading("Allocation", text="Allocation (%)")
+        self.tree.column("Instrument", width=120, anchor="w")
+        self.tree.column("Allocation", width=100, anchor="e")
+        
+        # Add scrollbar to table
+        table_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=table_scrollbar.set)
+        
+        # Pack table and scrollbar
+        self.tree.pack(side="left", fill="both", expand=True)
+        table_scrollbar.pack(side="right", fill="y")
+        
+        # Navigation controls (horizontal layout, centered)
+        nav_frame = ttk.Frame(main_container)
+        nav_frame.pack(fill="x")
+        
+        # Center the navigation controls
+        nav_center_frame = ttk.Frame(nav_frame)
+        nav_center_frame.pack(anchor="center")
+        
+        # Left arrow button
+        self.prev_button = ttk.Button(nav_center_frame, text="◀", width=3, 
+                                     command=self._prev_segment, state="normal")
+        self.prev_button.pack(side="left", padx=2)
+        
+        # Copy button
+        self.copy_button = ttk.Button(nav_center_frame, text="📋", width=3,
+                                     command=self._copy_to_clipboard)
+        self.copy_button.pack(side="left", padx=2)
+        
+        # Right arrow button  
+        self.next_button = ttk.Button(nav_center_frame, text="▶", width=3,
+                                     command=self._next_segment, state="normal")
+        self.next_button.pack(side="left", padx=2)
+        
+        # Initialize display
+        self._update_display()
+
+    def _update_display(self):
+        """Update the display with current segment data"""
+        if not self.portfolio or not self.portfolio.segments:
+            self.header_label.config(text="No portfolio segments available")
+            # Clear table
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+            self._update_button_states()
+            return
+        
+        # Get current segment
+        current_segment = self.portfolio.segments[self.current_segment_index]
+        
+        # Update header with date range
+        start_date = current_segment.get('start_date', 'Unknown')
+        end_date = current_segment.get('end_date', 'Unknown')
+        
+        if hasattr(start_date, 'strftime'):
+            start_str = start_date.strftime('%Y-%m-%d')
+        else:
+            start_str = str(start_date)
+            
+        if hasattr(end_date, 'strftime'):
+            end_str = end_date.strftime('%Y-%m-%d')
+        else:
+            end_str = str(end_date)
+        
+        self.header_label.config(text=f"From {start_str} to {end_str}")
+        
+        # Clear existing table data
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        # Get allocations and populate table
+        allocations = current_segment.get('allocations', {})
+        
+        # Sort allocations by value (descending)
+        sorted_allocations = sorted(allocations.items(), key=lambda x: abs(x[1]), reverse=True)
+        
+        # Add rows to table
+        for instrument, allocation in sorted_allocations:
+            if abs(allocation) > 1e-9:  # Only show non-zero allocations
+                percentage = allocation * 100  # Convert to percentage
+                self.tree.insert("", "end", values=(instrument, f"{percentage:.2f}%"))
+        
+        # If no significant allocations, show a message
+        if not any(abs(alloc) > 1e-9 for alloc in allocations.values()):
+            self.tree.insert("", "end", values=("No significant allocations", ""))
+        
+        # Update button states
+        self._update_button_states()
+
+    def _update_button_states(self):
+        """Update navigation button states based on current position"""
+        if not self.portfolio or not self.portfolio.segments:
+            self.prev_button.config(state="disabled")
+            self.next_button.config(state="disabled")
+            self.copy_button.config(state="disabled")
+            return
+        
+        total_segments = len(self.portfolio.segments)
+        
+        # Previous button
+        if self.current_segment_index <= 0:
+            self.prev_button.config(state="disabled")
+        else:
+            self.prev_button.config(state="normal")
+        
+        # Next button
+        if self.current_segment_index >= total_segments - 1:
+            self.next_button.config(state="disabled")
+        else:
+            self.next_button.config(state="normal")
+        
+        # Copy button (always enabled if we have segments)
+        self.copy_button.config(state="normal")
+
+    def _prev_segment(self):
+        """Navigate to previous segment"""
+        if self.portfolio and self.portfolio.segments and self.current_segment_index > 0:
+            self.current_segment_index -= 1
+            self._update_display()
+
+    def _next_segment(self):
+        """Navigate to next segment"""
+        if (self.portfolio and self.portfolio.segments and 
+            self.current_segment_index < len(self.portfolio.segments) - 1):
+            self.current_segment_index += 1
+            self._update_display()
+
+    def _copy_to_clipboard(self):
+        """Copy the current table data to clipboard as DataFrame"""
+        if not self.portfolio or not self.portfolio.segments:
+            return
+        
+        try:
+            # Get current segment data
+            current_segment = self.portfolio.segments[self.current_segment_index]
+            allocations = current_segment.get('allocations', {})
+            
+            # Get all instruments with non-zero allocations
+            instruments = []
+            allocation_values = []
+            
+            for instrument, allocation in allocations.items():
+                if abs(allocation) > 1e-9:  # Only include non-zero allocations
+                    instruments.append(instrument)
+                    allocation_values.append(allocation)
+            
+            # Create DataFrame
+            df = pd.DataFrame({
+                'Instrument': instruments,
+                'Allocation': allocation_values
+            })
+            
+            # Sort by allocation (descending)
+            df = df.sort_values('Allocation', ascending=False, key=abs)
+            
+            # Copy to clipboard
+            df.to_clipboard(index=False)
+            
+            # Update status using app instance if available
+            if self.app_instance:
+                self.app_instance.set_status("Table copied to clipboard", success=True)
+            else:
+                print("Table copied to clipboard")
+                
+        except Exception as e:
+            error_msg = f"Error copying to clipboard: {e}"
+            if self.app_instance:
+                self.app_instance.set_status(error_msg, error=True)
+            else:
+                print(error_msg)
+
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -89,24 +296,20 @@ class App:
             # Plotting on load is handled within _load_application_state if allocators exist
 
     def _create_widgets(self):
-        main_v_pane = ttk.PanedWindow(self.root, orient=tk.VERTICAL)
-        main_v_pane.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Main horizontal paned window (left/right)
+        self.main_h_pane = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        self.main_h_pane.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        top_frame_outer = ttk.Frame(main_v_pane)
-        main_v_pane.add(top_frame_outer, weight=3)
-        top_h_pane = ttk.PanedWindow(top_frame_outer, orient=tk.HORIZONTAL)
-        top_h_pane.pack(fill=tk.BOTH, expand=True)
+        # --- Create Panes --- 
+        self.left_v_pane = ttk.PanedWindow(self.main_h_pane, orient=tk.VERTICAL)
+        self.main_h_pane.add(self.left_v_pane, weight=3) # 60% of total width (approx 3/5)
+        self.right_v_pane = ttk.PanedWindow(self.main_h_pane, orient=tk.VERTICAL)
+        self.main_h_pane.add(self.right_v_pane, weight=2) # 40% of total width (approx 2/5)
 
-        self.plot_frame_tl = ttk.LabelFrame(top_h_pane, text="Portfolio Performance (Out-of-Sample)", padding=5)
-        top_h_pane.add(self.plot_frame_tl, weight=3)
-        self.fig = Figure(figsize=(8, 6), dpi=100)
-        self.ax = self.fig.add_subplot(111)
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame_tl)
-        self.canvas_widget = self.canvas.get_tk_widget()
-        self.canvas_widget.pack(fill=tk.BOTH, expand=True)
-
-        self.top_right_controls_frame = ttk.Frame(top_h_pane, padding=5)
-        top_h_pane.add(self.top_right_controls_frame, weight=1)
+        # --- Populate Right Pane First (to ensure dependant widgets exist) ---
+        # Top-right: Controls
+        self.top_right_controls_frame = ttk.LabelFrame(self.right_v_pane, padding=5)
+        self.right_v_pane.add(self.top_right_controls_frame, weight=1) # 10% of right pane height a pprox
 
         action_button_bar = ttk.Frame(self.top_right_controls_frame)
         action_button_bar.pack(pady=(0,10), fill="x")
@@ -139,29 +342,38 @@ class App:
 
         date_config_frame.grid_columnconfigure(1, weight=1)
 
-        alloc_display_outer_frame = ttk.LabelFrame(self.top_right_controls_frame, text="Selected Allocator Details", padding=5)
-        alloc_display_outer_frame.pack(fill="both", expand=True, pady=(5,0))
-        ttk.Label(alloc_display_outer_frame, text="View Allocator:").pack(side="top", anchor="w", padx=2, pady=(0,2))
-        self.allocator_selector_var = tk.StringVar()
-        self.allocator_selector_combo = ttk.Combobox(alloc_display_outer_frame, textvariable=self.allocator_selector_var, state="readonly", width=30)
-        self.allocator_selector_combo.pack(side="top", fill="x", pady=(0,5), padx=2)
-        self.allocator_selector_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_allocations_display_area())
-        self.allocations_text_widget = tk.Text(alloc_display_outer_frame, height=10, wrap=tk.WORD, relief=tk.SOLID, borderwidth=1)
-        self.allocations_text_scrollbar = ttk.Scrollbar(alloc_display_outer_frame, command=self.allocations_text_widget.yview)
-        self.allocations_text_widget.configure(yscrollcommand=self.allocations_text_scrollbar.set)
-        self.allocations_text_scrollbar.pack(side="right", fill="y")
-        self.allocations_text_widget.pack(side="left", fill="both", expand=True)
-        self.allocations_text_widget.insert(tk.END, "Select an allocator to view its details.")
-        self.allocations_text_widget.config(state=tk.DISABLED, background=self.root.cget('bg'))
+        # Bottom-right: Allocator Details
+        self.allocator_details_frame = ttk.Frame(self.right_v_pane)
+        self.right_v_pane.add(self.allocator_details_frame, weight=9) # 90% of right pane height approx
 
-        # --- Bottom area: Allocator Management Only ---
-        bottom_frame_outer = ttk.Frame(main_v_pane) 
-        main_v_pane.add(bottom_frame_outer, weight=1) # Adjusted weight, can be tuned
+        selector_frame = ttk.Frame(self.allocator_details_frame)
+        selector_frame.pack(fill="x", pady=(0,5), side=tk.TOP)
+        ttk.Label(selector_frame, text="View Allocator:").pack(side="left", padx=(0,5))
+        self.allocator_selector_var = tk.StringVar()
+        self.allocator_selector_combo = ttk.Combobox(selector_frame, textvariable=self.allocator_selector_var, state="readonly", width=30)
+        self.allocator_selector_combo.pack(side="left", fill="x", expand=True)
+        self.allocator_selector_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_allocations_display_area())
         
-        self.allocator_mgmt_frame = ttk.LabelFrame(bottom_frame_outer, text="Allocator Setup", padding=5)
-        self.allocator_mgmt_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0) # Takes full space of bottom_frame_outer
+        # Placeholder for the PortfolioInfo widget
+        self.portfolio_info_widget = PortfolioInfo(self.allocator_details_frame)
+        self.portfolio_info_widget.pack(fill="both", expand=True, side=tk.TOP, pady=(5,0))
+
+        # --- Populate Left Pane ---
+        # Top-left: Plot area
+        self.plot_frame_tl = ttk.LabelFrame(self.left_v_pane, padding=5)
+        self.left_v_pane.add(self.plot_frame_tl, weight=3) # 60% of left pane height
+        self.fig = Figure(figsize=(8, 6), dpi=100)
+        self.ax = self.fig.add_subplot(111)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame_tl)
+        self.canvas_widget = self.canvas.get_tk_widget()
+        self.canvas_widget.pack(fill=tk.BOTH, expand=True)
+
+        # Bottom-left: Allocator Management
+        self.allocator_mgmt_frame = ttk.LabelFrame(self.left_v_pane, padding=5)
+        self.left_v_pane.add(self.allocator_mgmt_frame, weight=2) # 40% of left pane height
         self._create_allocator_management_ui()
 
+        # Final setup
         self._setup_plot_axes_appearance()
         self._set_initial_plot_view_limits()
         self.fig.tight_layout()
@@ -579,13 +791,20 @@ class App:
 
     def _save_application_state(self):
         self.set_status("Saving application state...")
+        # Use a dictionary to store sash positions for clarity
+        pane_positions = {
+            'main_h_pane': self.main_h_pane.sashpos(0),
+            'left_v_pane': self.left_v_pane.sashpos(0),
+            'right_v_pane': self.right_v_pane.sashpos(0)
+        }
         state = {
             "fit_start_date": self.fit_start_date_entry.get(),
             "fit_end_date": self.fit_end_date_entry.get(),
             "test_end_date": self.test_end_date_entry.get(),
             "allocators": [],
             "plot_dividends": self.plot_dividends_var.get(),
-            "window_geometry": self.root.geometry()
+            "window_geometry": self.root.geometry(),
+            "pane_positions": pane_positions
         }
 
         for aid, data in self.allocators_store.items():
@@ -616,7 +835,6 @@ class App:
         except TypeError as e:
             self.set_status(f"Error serializing state for save: {e}", error=True)
             messagebox.showerror("Save Error", f"Could not serialize state for saving: {e}. Ensure all state data is JSON-compatible.", parent=self.root)
-
     def _load_application_state(self) -> bool:
         if not os.path.exists(SAVE_STATE_FILENAME): 
             self.set_status("No saved state file found.")
@@ -642,6 +860,14 @@ class App:
                 self.plot_dividends_var.set(False); self.plot_dividends_checkbox.state(['!selected'])
                 
             if "window_geometry" in state: self.root.geometry(state["window_geometry"])
+
+            # Restore pane positions
+            pane_positions = state.get("pane_positions")
+            if pane_positions and isinstance(pane_positions, dict):
+                # Use a small delay to ensure the main window is ready for sash updates
+                self.root.after(100, lambda: self.main_h_pane.sashpos(0, pane_positions.get('main_h_pane')))
+                self.root.after(100, lambda: self.left_v_pane.sashpos(0, pane_positions.get('left_v_pane')))
+                self.root.after(100, lambda: self.right_v_pane.sashpos(0, pane_positions.get('right_v_pane')))
 
             self.allocators_store.clear()
             for saved_alloc_data in state.get("allocators", []):
@@ -706,70 +932,31 @@ class App:
         else: self.allocator_selector_var.set("") 
 
     def _refresh_allocations_display_area(self):
-        self.allocations_text_widget.config(state=tk.NORMAL, background='white'); self.allocations_text_widget.delete("1.0", tk.END)
-        selected_allocator_name = self.allocator_selector_var.get(); 
-        display_text = "No allocator selected or not found."
+        # Destroy the old PortfolioInfo widget
+        if hasattr(self, 'portfolio_info_widget') and self.portfolio_info_widget.winfo_exists():
+            self.portfolio_info_widget.destroy()
+
+        selected_allocator_name = self.allocator_selector_var.get()
         found_allocator_data = None
         
         if selected_allocator_name:
-            for data_dict in self.allocators_store.values(): 
-                if data_dict['instance'].get_name() == selected_allocator_name: 
-                    found_allocator_data = data_dict; break
+            for data_dict in self.allocators_store.values():
+                if data_dict['instance'].get_name() == selected_allocator_name:
+                    found_allocator_data = data_dict
+                    break
         
+        portfolio_to_display = None
         if found_allocator_data:
             allocator = found_allocator_data['instance']
-            is_enabled = found_allocator_data['is_enabled_var'].get()
-            
-            status_text = "ENABLED" if is_enabled else "DISABLED"
-            display_text = f"Allocator: '{allocator.get_name()}' ({status_text})\nType: {type(allocator).__name__}\n"
-            display_text += f"Instruments: {', '.join(sorted(list(allocator.get_instruments()))) if allocator.get_instruments() else 'None'}\n"
-            
-            # Removed MarkovitsAllocator specific block
-            if isinstance(allocator, MaxSharpeAllocator):
-                display_text += f"Optimization Target: Max Sharpe Ratio (Implicit)\n"
-                display_text += f"Allows Shorting: {getattr(allocator, '_allow_shorting', 'N/A')}\n"
-                display_text += f"Use Adjusted Close: {getattr(allocator, '_use_adj_close', 'N/A')}\n"
-            elif isinstance(allocator, MinVolatilityAllocator):
-                display_text += f"Optimization Target: Minimize Volatility (Implicit)\n"
-                display_text += f"Allows Shorting: {getattr(allocator, '_allow_shorting', 'N/A')}\n"
-                display_text += f"Use Adjusted Close: {getattr(allocator, '_use_adj_close', 'N/A')}\n"
-            # Add other allocator-specific details here if needed using getattr for safety
+            portfolio_to_display = getattr(allocator, '_last_computed_portfolio', None)
 
-            computed_portfolio: Optional[Portfolio] = getattr(allocator, '_last_computed_portfolio', None)
-
-            if computed_portfolio and computed_portfolio.segments:
-                # Display info from the first segment as a representation
-                first_segment = computed_portfolio.segments[0]
-                segment_allocs = first_segment['allocations']
-                segment_start = first_segment['start_date']
-                segment_end = first_segment['end_date']
-                
-                display_text += f"\nComputed Portfolio (Segment 1 of {len(computed_portfolio.segments)}):\n"
-                display_text += f"  Segment Period: {segment_start.strftime('%Y-%m-%d')} to {segment_end.strftime('%Y-%m-%d')}\n"
-                
-                if segment_allocs:
-                    alloc_sum = sum(segment_allocs.values())
-                    display_text += "  Allocations:\n" + "\n".join([
-                        f"    {inst}: {percent:.2%}" for inst, percent in sorted(segment_allocs.items()) if abs(percent) > 1e-9
-                    ])
-                    if not (abs(alloc_sum - 1.0) < 1e-7 or (not any(abs(v) > 1e-9 for v in segment_allocs.values()) and abs(alloc_sum) < 1e-9)):
-                        display_text += f"\n\n  WARNING: Segment allocations sum to {alloc_sum*100:.2f}%."
-                    elif not any(abs(v) > 1e-9 for v in segment_allocs.values()):
-                        display_text += "\n  (All allocations in segment are zero)"
-                else:
-                    display_text += "  No allocations in this segment."
-                
-                if len(computed_portfolio.segments) > 1:
-                    display_text += "\n  (Note: This allocator produced multiple portfolio segments. Details above are for the first segment.)"
-
-            else: 
-                display_text += "\nNo portfolio segments computed yet or available from last 'FIT & PLOT'."
-                if is_enabled : display_text += "\nRun 'FIT & PLOT' to compute."
-        elif not self.allocators_store:
-            display_text = "No allocators created yet."
-        
-        self.allocations_text_widget.insert(tk.END, display_text)
-        self.allocations_text_widget.config(state=tk.DISABLED, background=self.root.cget('bg'))
+        # Create a new PortfolioInfo widget
+        self.portfolio_info_widget = PortfolioInfo(
+            self.allocator_details_frame, 
+            portfolio=portfolio_to_display,
+            app_instance=self
+        )
+        self.portfolio_info_widget.pack(fill="both", expand=True, side=tk.TOP, pady=(5,0))
 
     def _setup_plot_axes_appearance(self):
         self.ax.clear() 
@@ -794,11 +981,16 @@ class App:
         except ValueError: 
             self.ax.set_xlim(date.today() - timedelta(days=30), date.today())
 
-    def parse_date_entry(self, entry_widget: ttk.Entry, date_name: str) -> Optional[date]:
+    def parse_date_entry(self, entry_widget: ttk.Entry, date_name: str, silent: bool = False) -> Optional[date]:
         date_str = entry_widget.get().strip()
-        if not date_str: messagebox.showerror("Input Error", f"{date_name} cannot be empty.", parent=self.root); return None
-        try: return datetime.strptime(date_str, "%Y-%m-%d").date()
-        except ValueError: messagebox.showerror("Input Error", f"Invalid {date_name} (YYYY-MM-DD).", parent=self.root); return None
+        if not date_str:
+            if not silent: messagebox.showerror("Input Error", f"{date_name} cannot be empty.", parent=self.root)
+            return None
+        try: 
+            return datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError: 
+            if not silent: messagebox.showerror("Input Error", f"Invalid {date_name} (YYYY-MM-DD).", parent=self.root)
+            return None
 
     def set_status(self, message: str, error: bool = False, success: bool = False):
         self.status_bar.config(text=message)
