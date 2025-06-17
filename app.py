@@ -130,6 +130,122 @@ class DuplicateAllocatorDialog(simpledialog.Dialog):
         self.result = (self.type_var.get(), self.name_var.get())
 
 
+# Date Picker Dialog
+class DatePickerDialog(simpledialog.Dialog):
+    def __init__(self, parent, title, initial_date=None):
+        self.initial_date = initial_date or date.today()
+        self.selected_date = self.initial_date
+        self.result = None
+        super().__init__(parent, title)
+
+    def body(self, master):
+        # Configure grid weights
+        master.grid_columnconfigure(0, weight=1)
+        
+        # Calendar Frame
+        calendar_frame = ttk.LabelFrame(master, text="Select Date", padding=15)
+        calendar_frame.grid(row=0, column=0, sticky='nsew', pady=(0, 10))
+        
+        # Year and Month controls
+        controls_frame = ttk.Frame(calendar_frame)
+        controls_frame.grid(row=0, column=0, columnspan=7, sticky='ew', pady=(0, 10))
+        
+        self.year_var = tk.StringVar(value=str(self.initial_date.year))
+        self.month_var = tk.StringVar(value=str(self.initial_date.month))
+        
+        ttk.Label(controls_frame, text="Year:").grid(row=0, column=0, sticky='w', padx=(0, 5))
+        year_combo = ttk.Combobox(controls_frame, textvariable=self.year_var, 
+                                 values=[str(y) for y in range(2000, 2030)], width=8, state='readonly')
+        year_combo.grid(row=0, column=1, padx=(0, 20))
+        year_combo.bind('<<ComboboxSelected>>', lambda e: self._update_calendar())
+        
+        ttk.Label(controls_frame, text="Month:").grid(row=0, column=2, sticky='w', padx=(0, 5))
+        month_combo = ttk.Combobox(controls_frame, textvariable=self.month_var,
+                                  values=[str(m) for m in range(1, 13)], width=8, state='readonly')
+        month_combo.grid(row=0, column=3)
+        month_combo.bind('<<ComboboxSelected>>', lambda e: self._update_calendar())
+        
+        # Days of week header
+        days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        for i, day in enumerate(days):
+            label = ttk.Label(calendar_frame, text=day, font=("Helvetica", 9, "bold"), anchor='center')
+            label.grid(row=1, column=i, sticky='ew', padx=2, pady=2)
+        
+        # Create day buttons storage
+        self.day_buttons = {}
+        
+        # Create grid of day buttons (6 rows x 7 cols for full month coverage)
+        for row in range(2, 8):
+            for col in range(7):
+                btn = tk.Button(calendar_frame, text="", width=4, height=2, font=("Helvetica", 9),
+                               command=lambda r=row, c=col: self._on_day_click(r, c))
+                btn.grid(row=row, column=col, padx=2, pady=2, sticky='ew')
+                self.day_buttons[f'{row},{col}'] = btn
+        
+        # Configure column weights for even distribution
+        for i in range(7):
+            calendar_frame.grid_columnconfigure(i, weight=1)
+        
+        # Initialize calendar
+        self._update_calendar()
+        
+        return year_combo  # Return focus widget
+
+    def _update_calendar(self):
+        """Update calendar display for the current month/year"""
+        import calendar
+        
+        year = int(self.year_var.get())
+        month = int(self.month_var.get())
+        
+        # Clear all buttons first
+        for btn in self.day_buttons.values():
+            btn.config(text="", state='disabled', bg='SystemButtonFace', relief='raised')
+        
+        # Get calendar data
+        cal = calendar.monthcalendar(year, month)
+        
+        # Update buttons with days
+        for week_num, week in enumerate(cal):
+            row = week_num + 2  # Start from row 2 (after header)
+            for day_num, day in enumerate(week):
+                if day == 0:
+                    continue
+                
+                btn = self.day_buttons[f'{row},{day_num}']
+                btn.config(text=str(day), state='normal')
+                
+                # Highlight selected date
+                current_date = date(year, month, day)
+                if current_date == self.selected_date:
+                    btn.config(bg='lightblue', relief='sunken')
+                else:
+                    btn.config(bg='SystemButtonFace', relief='raised')
+
+    def _on_day_click(self, row, col):
+        """Handle day button click"""
+        btn = self.day_buttons[f'{row},{col}']
+        day_text = btn.cget('text')
+        
+        if not day_text or day_text == "":
+            return
+        
+        day = int(day_text)
+        year = int(self.year_var.get())
+        month = int(self.month_var.get())
+        
+        self.selected_date = date(year, month, day)
+        self._update_calendar()
+
+    def validate(self):
+        """Validate the selected date"""
+        return True  # Simple validation - any valid date is acceptable
+
+    def apply(self):
+        """Apply the selected date"""
+        self.result = self.selected_date
+
+
 class PortfolioInfo(ttk.Frame):
     def __init__(self, parent, portfolio: Optional[Portfolio] = None, app_instance=None, **kwargs):
         super().__init__(parent, **kwargs)
@@ -159,9 +275,12 @@ class PortfolioInfo(ttk.Frame):
         header_frame.grid_columnconfigure(0, weight=1)
         header_frame.grid_columnconfigure(1, weight=0)
         
-        # Centered date label
-        self.header_label = ttk.Label(header_frame, font=("Helvetica", 10, "bold"), anchor="center")
+        # Centered date label (clickable)
+        self.header_label = ttk.Label(header_frame, font=("Helvetica", 10, "bold"), anchor="center", cursor="hand2")
         self.header_label.grid(row=0, column=0, sticky="ew")
+        self.header_label.bind("<Button-1>", self._on_date_header_click)
+        self.header_label.bind("<Enter>", self._on_header_enter)
+        self.header_label.bind("<Leave>", self._on_header_leave)
         
         # Show graph checkbox (right side)
         self.show_graph_var = tk.BooleanVar(value=False)
@@ -614,6 +733,82 @@ class PortfolioInfo(ttk.Frame):
             percentage = allocation * 100  # Convert to percentage
             tag = 'evenrow' if idx % 2 == 0 else 'oddrow'
             self.tree.insert("", "end", values=(instrument, f"{percentage:.2f}%"), tags=(tag,))
+
+    def _on_date_header_click(self, event):
+        """Handle click on the date header to open date picker"""
+        if not self.portfolio or not self.portfolio.segments:
+            return
+        
+        # Get current segment start date as initial selection
+        current_segment = self.portfolio.segments[self.current_segment_index]
+        start_date = current_segment.get('start_date')
+        
+        # Convert to date object if it's datetime object
+        if hasattr(start_date, 'date'):
+            start_date = start_date.date()
+        
+        # Show date picker dialog
+        dialog = DatePickerDialog(
+            self.master,
+            "Select Date",
+            initial_date=start_date
+        )
+        
+        if dialog.result:
+            selected_date = dialog.result
+            self._navigate_to_date(selected_date)
+
+    def _on_header_enter(self, event):
+        """Handle mouse enter on header to show it's clickable"""
+        if self.portfolio and self.portfolio.segments:
+            # Change appearance to indicate it's clickable
+            self.header_label.configure(foreground="blue")
+
+    def _on_header_leave(self, event):
+        """Handle mouse leave on header to restore normal appearance"""
+        # Restore normal appearance
+        self.header_label.configure(foreground="")
+
+    def _navigate_to_date(self, target_date):
+        """Navigate to the segment that contains the specified date"""
+        if not self.portfolio or not self.portfolio.segments:
+            return
+        
+        # Find the first segment that contains the target date
+        for i, segment in enumerate(self.portfolio.segments):
+            seg_start = segment.get('start_date')
+            seg_end = segment.get('end_date')
+            
+            # Convert to date objects if needed
+            if hasattr(seg_start, 'date'):
+                seg_start = seg_start.date()
+            if hasattr(seg_end, 'date'):
+                seg_end = seg_end.date()
+            
+            # Check if target date is within this segment
+            if seg_start and seg_end and seg_start <= target_date <= seg_end:
+                # Found the segment containing the date
+                if i != self.current_segment_index:
+                    self.current_segment_index = i
+                    self._update_display()
+                    
+                    # Provide feedback to user about navigation
+                    if self.app_instance:
+                        start_str = seg_start.strftime('%Y-%m-%d')
+                        end_str = seg_end.strftime('%Y-%m-%d')
+                        self.app_instance.set_status(
+                            f"Navigated to segment containing {target_date.strftime('%Y-%m-%d')}: {start_str} to {end_str}", 
+                            success=True
+                        )
+                else:
+                    # Already viewing the segment containing this date
+                    if self.app_instance:
+                        self.app_instance.set_status(f"Already viewing segment containing {target_date.strftime('%Y-%m-%d')}")
+                return
+        
+        # If no segment contains the date, inform the user
+        if self.app_instance:
+            self.app_instance.set_status(f"No segment contains the date {target_date.strftime('%Y-%m-%d')}", error=True)
 
 class App:
     def __init__(self, root: tk.Tk):
