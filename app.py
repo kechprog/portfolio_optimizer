@@ -136,7 +136,37 @@ class DatePickerDialog(simpledialog.Dialog):
         self.initial_date = initial_date or date.today()
         self.selected_date = self.initial_date
         self.result = None
+        # Detect theme colors
+        self._detect_theme_colors()
         super().__init__(parent, title)
+
+    def _detect_theme_colors(self):
+        """Detect current theme colors for the calendar"""
+        # Check if we're in dark mode by looking at Windows theme
+        is_dark = _is_dark_mode() if _is_windows() else False
+        
+        if is_dark:
+            # Dark theme colors
+            self.theme_colors = {
+                'normal_bg': '#404040',
+                'normal_fg': '#ffffff',
+                'selected_bg': '#0078d4',
+                'selected_fg': '#ffffff',
+                'hover_bg': '#505050',
+                'disabled_bg': '#2d2d2d',
+                'disabled_fg': '#808080'
+            }
+        else:
+            # Light theme colors
+            self.theme_colors = {
+                'normal_bg': '#f0f0f0',
+                'normal_fg': '#000000',
+                'selected_bg': '#0078d4',
+                'selected_fg': '#ffffff',
+                'hover_bg': '#e5e5e5',
+                'disabled_bg': '#f5f5f5',
+                'disabled_fg': '#a0a0a0'
+            }
 
     def body(self, master):
         # Configure grid weights
@@ -178,8 +208,17 @@ class DatePickerDialog(simpledialog.Dialog):
         for row in range(2, 8):
             for col in range(7):
                 btn = tk.Button(calendar_frame, text="", width=4, height=2, font=("Helvetica", 9),
-                               command=lambda r=row, c=col: self._on_day_click(r, c))
-                btn.grid(row=row, column=col, padx=2, pady=2, sticky='ew')
+                               command=lambda r=row, c=col: self._on_day_click(r, c),
+                               bg=self.theme_colors['disabled_bg'],
+                               fg=self.theme_colors['disabled_fg'],
+                               relief='flat',
+                               borderwidth=1)
+                btn.grid(row=row, column=col, padx=1, pady=1, sticky='ew')
+                
+                # Add hover effects
+                btn.bind("<Enter>", lambda e, button=btn: self._on_button_hover(button, True))
+                btn.bind("<Leave>", lambda e, button=btn: self._on_button_hover(button, False))
+                
                 self.day_buttons[f'{row},{col}'] = btn
         
         # Configure column weights for even distribution
@@ -191,6 +230,20 @@ class DatePickerDialog(simpledialog.Dialog):
         
         return year_combo  # Return focus widget
 
+    def _on_button_hover(self, button, is_entering):
+        """Handle button hover effects"""
+        if button.cget('state') == 'disabled':
+            return
+        
+        # Don't change hover for selected button
+        if button.cget('bg') == self.theme_colors['selected_bg']:
+            return
+            
+        if is_entering:
+            button.config(bg=self.theme_colors['hover_bg'])
+        else:
+            button.config(bg=self.theme_colors['normal_bg'])
+
     def _update_calendar(self):
         """Update calendar display for the current month/year"""
         import calendar
@@ -200,7 +253,11 @@ class DatePickerDialog(simpledialog.Dialog):
         
         # Clear all buttons first
         for btn in self.day_buttons.values():
-            btn.config(text="", state='disabled', bg='SystemButtonFace', relief='raised')
+            btn.config(text="", 
+                      state='disabled', 
+                      bg=self.theme_colors['disabled_bg'], 
+                      fg=self.theme_colors['disabled_fg'],
+                      relief='flat')
         
         # Get calendar data
         cal = calendar.monthcalendar(year, month)
@@ -213,14 +270,19 @@ class DatePickerDialog(simpledialog.Dialog):
                     continue
                 
                 btn = self.day_buttons[f'{row},{day_num}']
-                btn.config(text=str(day), state='normal')
+                btn.config(text=str(day), 
+                          state='normal',
+                          fg=self.theme_colors['normal_fg'])
                 
                 # Highlight selected date
                 current_date = date(year, month, day)
                 if current_date == self.selected_date:
-                    btn.config(bg='lightblue', relief='sunken')
+                    btn.config(bg=self.theme_colors['selected_bg'], 
+                              fg=self.theme_colors['selected_fg'],
+                              relief='solid')
                 else:
-                    btn.config(bg='SystemButtonFace', relief='raised')
+                    btn.config(bg=self.theme_colors['normal_bg'],
+                              relief='raised')
 
     def _on_day_click(self, row, col):
         """Handle day button click"""
