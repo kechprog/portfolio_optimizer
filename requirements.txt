@@ -1,6 +1,7 @@
 pandas
 matplotlib
-requests
 python-dotenv
 alpha-vantage
 sv-ttk
+PyPortfolioOpt
+scikit-learn

@@ -24,11 +24,37 @@ class InstrumentListManagerWidget(ttk.Frame):
         self._populate_initial_instruments()
 
     def _build_ui(self):
-        """Constructs the UI elements for the widget."""
-        # Frame to hold the list of instrument rows (scrollable if many)
-        # For simplicity, direct packing here. For scrollability, a Canvas would be needed.
-        self.instrument_list_display_frame = ttk.Frame(self)
-        self.instrument_list_display_frame.pack(side="top", fill="both", expand=True, padx=0, pady=0)
+        """Constructs the UI elements for the widget with scrollable container."""
+        # Create a frame to hold the canvas and scrollbar
+        scroll_container = ttk.Frame(self)
+        scroll_container.pack(side="top", fill="both", expand=True, padx=0, pady=0)
+        
+        # Create canvas for scrollable content
+        self.canvas = tk.Canvas(scroll_container, highlightthickness=0)
+        
+        # Create vertical scrollbar
+        v_scrollbar = ttk.Scrollbar(scroll_container, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=v_scrollbar.set)
+        
+        # Pack scrollbar and canvas
+        v_scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        
+        # Create the frame that will hold the instrument rows inside the canvas
+        self.instrument_list_display_frame = ttk.Frame(self.canvas)
+        
+        # Create window in canvas to hold the scrollable frame
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.instrument_list_display_frame, anchor="nw")
+        
+        # Bind canvas resize to update the scrollable frame width
+        self.canvas.bind('<Configure>', self._on_canvas_configure)
+        
+        # Bind frame configure to update scroll region when content changes
+        self.instrument_list_display_frame.bind("<Configure>", self._on_frame_configure)
+        
+        # Bind mousewheel to canvas for scrolling
+        self.canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self.instrument_list_display_frame.bind("<MouseWheel>", self._on_mousewheel)
 
         # "Add Instrument" Button Frame and Button
         add_button_frame = ttk.Frame(self)
@@ -37,6 +63,24 @@ class InstrumentListManagerWidget(ttk.Frame):
         self.add_instrument_button = ttk.Button(add_button_frame, text="Add Instrument",
                                            command=self._add_instrument_row_ui_event)
         self.add_instrument_button.pack(pady=2) # Center button in its frame
+
+    def _on_canvas_configure(self, event):
+        """Handle canvas resize to update the scrollable frame width."""
+        # Update the canvas window width to match the canvas width
+        canvas_width = event.width
+        self.canvas.itemconfig(self.canvas_window, width=canvas_width)
+
+    def _on_frame_configure(self, event):
+        """Handle frame configuration changes to update scroll region."""
+        self._update_scroll_region()
+
+    def _on_mousewheel(self, event):
+        """Handle mouse wheel scrolling."""
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def _scroll_to_bottom(self):
+        """Scroll the canvas to show the bottom (most recently added items)."""
+        self.canvas.yview_moveto(1.0)
 
     def _populate_initial_instruments(self):
         """Adds UI rows for any initial instruments provided."""
@@ -78,6 +122,12 @@ class InstrumentListManagerWidget(ttk.Frame):
             'entry': name_entry, 
             'button': delete_button
         })
+        
+        # Update scroll region after adding new row
+        self.after_idle(self._update_scroll_region)
+        # Scroll to show the newly added row
+        self.after_idle(self._scroll_to_bottom)
+        
         return name_entry
 
     def _remove_instrument_row_ui(self, row_frame_to_delete: ttk.Frame):
@@ -94,6 +144,8 @@ class InstrumentListManagerWidget(ttk.Frame):
         
         if row_to_remove_data:
             row_to_remove_data['frame'].destroy()
+            # Update scroll region after removing row
+            self.after_idle(self._update_scroll_region)
 
         if not self.instrument_rows_data: # If list becomes empty
             self._add_instrument_row_ui() # Add a fresh blank row
@@ -118,6 +170,32 @@ class InstrumentListManagerWidget(ttk.Frame):
     def focus_on_add_button(self) -> None:
         """Sets focus to the 'Add Instrument' button."""
         self.add_instrument_button.focus_set()
+
+    def _update_scroll_region(self):
+        """Update the scroll region to encompass all widgets."""
+        # Force update of the display frame geometry
+        self.instrument_list_display_frame.update_idletasks()
+        
+        # Wait a bit more for layout to complete
+        self.update_idletasks()
+        
+        # Try to get bbox first
+        bbox = self.canvas.bbox("all")
+        if bbox:
+            self.canvas.configure(scrollregion=bbox)
+        else:
+            # Fallback: Calculate the total height manually
+            # Force geometry manager to calculate sizes
+            self.instrument_list_display_frame.update()
+            total_height = self.instrument_list_display_frame.winfo_reqheight()
+            total_width = self.instrument_list_display_frame.winfo_reqwidth()
+            if total_height > 0:
+                self.canvas.configure(scrollregion=(0, 0, total_width, total_height))
+            else:
+                # Final fallback: calculate based on number of rows
+                row_count = len(self.instrument_rows_data)
+                estimated_height = row_count * 35  # Approximate height per row
+                self.canvas.configure(scrollregion=(0, 0, 300, estimated_height))
 
 # Example Usage (can be commented out or removed for production)
 # if __name__ == '__main__':
