@@ -1241,11 +1241,15 @@ class App:
 
         # Determine current allocator type name
         current_type = None
-        for type_name, cls in self.available_allocator_types.items():
-            if isinstance(original_instance, cls):
-                current_type = type_name
-                break
-        type_names = list(self.available_allocator_types.keys())
+        if isinstance(original_instance, MergeAllocator):
+            current_type = "Merge Allocator"
+            type_names = ["Merge Allocator"]  # MergeAllocators can only be duplicated as MergeAllocators
+        else:
+            for type_name, cls in self.available_allocator_types.items():
+                if isinstance(original_instance, cls):
+                    current_type = type_name
+                    break
+            type_names = list(self.available_allocator_types.keys())
         initial_name = original_state.get('name', '') + " (copy)"
 
         # Show dialog
@@ -1264,7 +1268,11 @@ class App:
         new_state = dict(original_state)
         new_state['name'] = new_name
         try:
-            AllocatorClass = self.available_allocator_types[chosen_type]
+            # Handle MergeAllocator specially
+            if chosen_type == "Merge Allocator":
+                AllocatorClass = MergeAllocator
+            else:
+                AllocatorClass = self.available_allocator_types[chosen_type]
             new_instance = AllocatorClass(**new_state)
             
             # Set app instance reference for MergeAllocators
@@ -1504,9 +1512,15 @@ class App:
         for aid, data in self.allocators_store.items():
             instance = data['instance']
             allocator_type_name = None
-            for type_name_key, AllocatorClassInMap in self.available_allocator_types.items():
-                if isinstance(instance, AllocatorClassInMap):
-                    allocator_type_name = type_name_key; break
+            
+            # Handle MergeAllocator specially
+            if isinstance(instance, MergeAllocator):
+                allocator_type_name = "Merge Allocator"
+            else:
+                # Handle regular allocators
+                for type_name_key, AllocatorClassInMap in self.available_allocator_types.items():
+                    if isinstance(instance, AllocatorClassInMap):
+                        allocator_type_name = type_name_key; break
             
             if not allocator_type_name:
                 logger.warning(f"Type for allocator '{instance.get_name()}' not found. Skipping save of this allocator."); continue
@@ -1566,7 +1580,14 @@ class App:
             self.allocators_store.clear()
             for saved_alloc_data in state.get("allocators", []):
                 allocator_type_name = saved_alloc_data.get("type_name")
-                AllocatorClass = self.available_allocator_types.get(allocator_type_name)
+                
+                # Handle MergeAllocator specially
+                if allocator_type_name == "Merge Allocator":
+                    AllocatorClass = MergeAllocator
+                else:
+                    # Handle regular allocators
+                    AllocatorClass = self.available_allocator_types.get(allocator_type_name)
+                    
                 if not AllocatorClass: 
                     logger.warning(f"Unknown allocator type '{allocator_type_name}' in saved state. Skipping."); continue
                 
