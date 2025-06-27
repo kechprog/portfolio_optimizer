@@ -22,6 +22,7 @@ from allocator.manual import ManualAllocator
 # from allocator.markovits import MarkovitsAllocator # REMOVED
 from allocator.mpt.max_sharpe import MaxSharpeAllocator # New import
 from allocator.mpt.min_volatility import MinVolatilityAllocator # New import
+from allocator.merge import MergeAllocator # New import
 from portfolio import Portfolio # Added import
 
 from data_getter import av_fetcher # Changed to import av_fetcher directly
@@ -1009,7 +1010,8 @@ class App:
                                                      values=list(self.available_allocator_types.keys()), state="readonly", width=20)
         if self.available_allocator_types: self.new_allocator_type_combo.current(0)
         self.new_allocator_type_combo.pack(side="left", padx=(0,10))
-        ttk.Button(top_bar, text="Create Allocator", command=self._on_create_allocator_button_click, style="Success.TButton").pack(side="left")
+        ttk.Button(top_bar, text="Create Allocator", command=self._on_create_allocator_button_click, style="Success.TButton").pack(side="left", padx=(0,5))
+        ttk.Button(top_bar, text="Create Merge Allocator", command=self._on_create_merge_allocator_button_click, style="Info.TButton").pack(side="left")
 
         list_area = ttk.Frame(self.allocator_mgmt_frame)
         list_area.pack(fill="both", expand=True, pady=5)
@@ -1127,6 +1129,11 @@ class App:
                         return
                 
                 reconfigured_instance = AllocatorClass(**new_state_from_config)
+                
+                # Set app instance reference for MergeAllocators
+                if isinstance(reconfigured_instance, MergeAllocator):
+                    reconfigured_instance.set_app_instance(self)
+                    
             except Exception as e:
                 messagebox.showerror("Configure Allocator", f"Failed to reconfigure allocator instance: {e}", parent=self.root)
                 self.set_status(f"Error reconfiguring {existing_instance.get_name()}: {e}", error=True)
@@ -1153,6 +1160,72 @@ class App:
                 self._refresh_allocations_display_area() 
         else:
             messagebox.showerror("Error", "Allocator not found for deletion.", parent=self.root)
+
+    def _on_create_merge_allocator_button_click(self):
+        """Handle the Create Merge Allocator button click."""
+        # Check if there are any non-merge allocators available
+        available_for_merge = []
+        for data in self.allocators_store.values():
+            allocator_instance = data['instance']
+            if not isinstance(allocator_instance, MergeAllocator):
+                available_for_merge.append(allocator_instance.get_name())
+        
+        if len(available_for_merge) < 2:
+            messagebox.showwarning("Create Merge Allocator", 
+                                 "At least 2 non-merge allocators are required to create a merge allocator.", 
+                                 parent=self.root)
+            return
+        
+        # Create the merge allocator using its configure method
+        # Set a temporary reference so the dialog can find the app instance
+        self.root.app_instance = self
+        new_allocator_state = MergeAllocator.configure(parent_window=self.root, existing_state=None)
+        # Clean up the temporary reference
+        if hasattr(self.root, 'app_instance'):
+            delattr(self.root, 'app_instance')
+        
+        if new_allocator_state:
+            try:
+                new_allocator_name = str(new_allocator_state.get('name', ''))
+                if not new_allocator_name:
+                    messagebox.showerror("Create Merge Allocator", 
+                                       "Allocator configuration did not return a valid name.", 
+                                       parent=self.root)
+                    return
+
+                # Check for duplicate names
+                new_name_lower = new_allocator_name.lower()
+                for data in self.allocators_store.values():
+                    if data['instance'].get_name().lower() == new_name_lower:
+                        messagebox.showerror("Create Merge Allocator", 
+                                           f"An allocator with the name '{new_allocator_name}' already exists.", 
+                                           parent=self.root)
+                        return
+                
+                # Create the allocator instance
+                new_allocator_instance = MergeAllocator(**new_allocator_state)
+                
+                # Set the app instance reference so it can access other allocators
+                new_allocator_instance.set_app_instance(self)
+                
+            except Exception as e:
+                messagebox.showerror("Create Merge Allocator", 
+                                   f"Failed to create merge allocator instance: {e}", 
+                                   parent=self.root)
+                self.set_status(f"Error creating Merge Allocator: {e}", error=True)
+                return
+
+            # Add to the allocators store
+            allocator_id = str(uuid.uuid4())
+            self.allocators_store[allocator_id] = {
+                'instance': new_allocator_instance, 
+                'is_enabled_var': tk.BooleanVar(value=True)
+            }
+            self.set_status(f"Merge Allocator '{new_allocator_instance.get_name()}' created.", success=True)
+            self._redraw_allocator_list_ui()
+            self._refresh_allocations_display_area()
+        else: 
+            self.set_status("Merge Allocator creation cancelled.")
 
     def _on_duplicate_allocator_prompt(self, allocator_id_to_duplicate: str):
         """
@@ -1193,6 +1266,11 @@ class App:
         try:
             AllocatorClass = self.available_allocator_types[chosen_type]
             new_instance = AllocatorClass(**new_state)
+            
+            # Set app instance reference for MergeAllocators
+            if isinstance(new_instance, MergeAllocator):
+                new_instance.set_app_instance(self)
+                
         except Exception as e:
             messagebox.showerror("Duplicate Error", f"Failed to duplicate allocator: {e}", parent=self.root)
             return
@@ -1250,15 +1328,17 @@ class App:
                     allocator._last_computed_portfolio = computed_portfolio # Store for display
 
                     # Determine the allocations to use for the out-of-sample plot period.
-                    # These are the allocations active at fitting_end_dt (which is plot_start_dt)
-                    segments_at_fitting_end = computed_portfolio.get(fitting_end_dt)
+                    # Get all segments up to the test end date
+                    all_segments = computed_portfolio.get(plot_actual_end_dt)
                     allocations_for_plot = None
-                    if segments_at_fitting_end:
-                        # Use allocations from the last segment active at or before fitting_end_dt
-                        allocations_for_plot = segments_at_fitting_end[-1]['allocations']
+                    if all_segments:
+                        # Use allocations from the first segment (for out-of-sample plotting)
+                        # Most allocators create a single segment from fitting_end_dt to test_end_dt
+                        allocations_for_plot = all_segments[0]['allocations']
+                        logger.debug(f"Allocator {allocator.get_name()} has {len(all_segments)} segments for plotting")
                     else:
-                        # No segments by fitting_end_dt means no defined strategy for the plot period
-                        logger.info(f"Allocator {allocator.get_name()} has no allocation segments defined by fitting_end_dt ({fitting_end_dt}).")
+                        # No segments means no defined strategy for the plot period
+                        logger.info(f"Allocator {allocator.get_name()} has no allocation segments defined for plotting period.")
                         allocations_for_plot = {} # Empty dict if no strategy
 
                     enabled_allocators_data.append({
@@ -1512,6 +1592,10 @@ class App:
                     continue
                 
                 if new_instance: 
+                    # Set app instance reference for MergeAllocators
+                    if isinstance(new_instance, MergeAllocator):
+                        new_instance.set_app_instance(self)
+                    
                     self.allocators_store[allocator_id] = {
                         'instance': new_instance, 
                         'is_enabled_var': tk.BooleanVar(value=saved_alloc_data.get("is_enabled", True))
