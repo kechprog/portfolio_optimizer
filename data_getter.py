@@ -3,13 +3,25 @@ import logging
 import pandas as pd
 from typing import Set, List, Dict, Callable, Tuple, Optional
 import os
+import sys
 from dotenv import load_dotenv
 from alpha_vantage.timeseries import TimeSeries
 
 logger = logging.getLogger(__name__)
 
+def _get_resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
 def _create_fetcher() -> Callable[[Set[str], pd.Timestamp, pd.Timestamp], Tuple[pd.DataFrame, List[str]]]:
-    load_dotenv()
+    # Load .env file from the correct location (works in both dev and compiled)
+    env_path = _get_resource_path('.env')
+    load_dotenv(env_path)
 
     cache: Dict[str, pd.DataFrame] = {}
     key = os.getenv("ALPHA_KEY")

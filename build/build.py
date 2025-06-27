@@ -21,7 +21,25 @@ PYINSTALLER_OPTIONS = [
     f"--distpath=dist",
     f"--name={APP_NAME}",
     "--optimize=2",
-    # f"--add-data={ENV_PATH}{os.pathsep}.",  # Include .env
+    "--hidden-import=scipy._lib.messagestream",
+    "--hidden-import=scipy.sparse.csgraph._validation",
+    "--hidden-import=scipy.sparse._matrix",
+    "--hidden-import=scipy.special._ufuncs_cxx",
+    "--hidden-import=scipy.linalg.cython_blas",
+    "--hidden-import=scipy.linalg.cython_lapack",
+    "--hidden-import=scipy.integrate",
+    "--hidden-import=scipy.integrate.quadrature",
+    "--hidden-import=scipy.integrate.odepack",
+    "--hidden-import=scipy.integrate._odepack",
+    "--hidden-import=scipy.integrate.quadpack",
+    "--hidden-import=scipy.integrate._quadpack",
+    "--hidden-import=scipy.integrate._ode",
+    "--hidden-import=scipy.integrate.vode",
+    "--hidden-import=scipy.integrate._dop",
+    "--hidden-import=scipy._lib._ccallback",
+    "--hidden-import=scipy._cyutility",
+    "--collect-submodules=scipy",
+    f"--add-data={BASE_DIR.parent / '.env'}{os.pathsep}.",  # Include .env
 ]
 
 # Resize icon and convert to ICO format (if needed)
