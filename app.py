@@ -1110,10 +1110,18 @@ class App:
         AllocatorClass = type(existing_instance)
         existing_state = existing_instance.get_state()
 
+        # Set app instance reference for MergeAllocator configure dialogs
+        if isinstance(existing_instance, MergeAllocator):
+            self.root.app_instance = self
+        
         new_state_from_config = AllocatorClass.configure(
             parent_window=self.root, 
             existing_state=existing_state
         )
+        
+        # Clean up the temporary reference
+        if hasattr(self.root, 'app_instance'):
+            delattr(self.root, 'app_instance')
 
         if new_state_from_config:
             try:
