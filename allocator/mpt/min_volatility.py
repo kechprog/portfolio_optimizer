@@ -65,7 +65,7 @@ class MinVolatilityAllocator(PortfolioAllocator):
         computed_allocations = ef.clean_weights()
         return {inst: computed_allocations.get(inst, 0.0) for inst in current_instruments}
 
-    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date, test_end_date: date) -> Portfolio:
+    def _compute_allocations_impl(self, fitting_start_date: date, fitting_end_date: date, test_end_date: date) -> Portfolio:
         portfolio = Portfolio(start_date=fitting_end_date)
         current_instruments = self.get_instruments()
         if not current_instruments:

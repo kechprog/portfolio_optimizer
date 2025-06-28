@@ -93,7 +93,7 @@ class ManualAllocator(PortfolioAllocator):
         logger.info(f"ManualAllocator configuration/creation cancelled for '{initial_name}'.")
         return None
 
-    def compute_allocations(self, fitting_start_date: date, fitting_end_date: date, test_end_date: date) -> Portfolio:
+    def _compute_allocations_impl(self, fitting_start_date: date, fitting_end_date: date, test_end_date: date) -> Portfolio:
         """
         Computes allocations and returns them within a Portfolio object.
         For ManualAllocator, this involves creating a single segment in the portfolio

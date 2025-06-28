@@ -1,9 +1,10 @@
-\
 # portfolio_optimizer/allocator/allocator.py
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Type, Any, Set, TypeVar
+from typing import Dict, Optional, Type, Any, Set, TypeVar, Tuple
 from datetime import date
 import tkinter as tk
+import hashlib
+import json
 
 # Assuming portfolio.py is in the parent directory of allocator/
 # Adjust import path if portfolio.py is located elsewhere relative to this file.
@@ -36,6 +37,10 @@ class PortfolioAllocator(ABC):
         if 'name' not in state or not str(state['name']).strip():
             raise ValueError("Allocator state must include a non-empty 'name'.")
         self._state: AllocatorState = state # Store the provided state
+        
+        # Caching mechanism for computed portfolios
+        self._last_computed_portfolio: Optional[Portfolio] = None
+        self._last_computation_cache_key: Optional[str] = None
 
     def get_name(self) -> str:
         """
@@ -82,11 +87,31 @@ class PortfolioAllocator(ABC):
         """
         pass
 
-    @abstractmethod
+    def _compute_cache_key(self, fitting_start_date: date, fitting_end_date: date, test_end_date: date) -> str:
+        """
+        Compute a cache key based on the allocator state and computation parameters.
+        This key is used to determine if the portfolio needs to be recomputed.
+        """
+        # Create a deterministic representation of the state and parameters
+        cache_data = {
+            'state': self.get_state(),
+            'fitting_start_date': fitting_start_date.isoformat(),
+            'fitting_end_date': fitting_end_date.isoformat(),
+            'test_end_date': test_end_date.isoformat()
+        }
+        
+        # Convert to JSON string and hash it for a compact cache key
+        cache_json = json.dumps(cache_data, sort_keys=True, default=str)
+        return hashlib.sha256(cache_json.encode()).hexdigest()
+
     def compute_allocations(self, fitting_start_date: date, fitting_end_date: date, test_end_date: date) -> Portfolio:
         """
         Computes the portfolio allocations based on the allocator's current state
         and the given fitting period, returning a Portfolio object.
+        
+        This method implements caching to avoid recomputation when the same
+        parameters and state are used. Subclasses should implement
+        `_compute_allocations_impl` instead of overriding this method.
 
         The returned Portfolio object will typically contain a single segment
         spanning from fitting_start_date to fitting_end_date for allocators
@@ -97,6 +122,7 @@ class PortfolioAllocator(ABC):
                                 and likely the start date of the returned Portfolio.
             fitting_end_date: The end date for the data used in fitting/computation,
                               and likely the end date for the primary segment in the Portfolio.
+            test_end_date: The end date for the test period.
 
         Returns:
             A Portfolio object representing the allocations for the specified period.
@@ -104,7 +130,46 @@ class PortfolioAllocator(ABC):
             this Portfolio object will contain one segment from fitting_start_date
             to fitting_end_date with these allocations.
         """
+        # Compute cache key for current parameters
+        current_cache_key = self._compute_cache_key(fitting_start_date, fitting_end_date, test_end_date)
+        
+        # Check if we can use cached result
+        if (self._last_computation_cache_key == current_cache_key and 
+            self._last_computed_portfolio is not None):
+            return self._last_computed_portfolio
+        
+        # Compute new portfolio
+        portfolio = self._compute_allocations_impl(fitting_start_date, fitting_end_date, test_end_date)
+        
+        # Cache the result
+        self._last_computed_portfolio = portfolio
+        self._last_computation_cache_key = current_cache_key
+        
+        return portfolio
+
+    @abstractmethod
+    def _compute_allocations_impl(self, fitting_start_date: date, fitting_end_date: date, test_end_date: date) -> Portfolio:
+        """
+        Internal implementation of portfolio allocation computation.
+        Subclasses should implement this method instead of compute_allocations.
+
+        Args:
+            fitting_start_date: The start date for the data used in fitting/computation.
+            fitting_end_date: The end date for the data used in fitting/computation.
+            test_end_date: The end date for the test period.
+
+        Returns:
+            A Portfolio object representing the allocations for the specified period.
+        """
         pass
+
+    def invalidate_cache(self) -> None:
+        """
+        Invalidate the cached portfolio computation.
+        This should be called when the allocator's state changes.
+        """
+        self._last_computed_portfolio = None
+        self._last_computation_cache_key = None
 
     # Convenience helper method to access instruments from the state.
     # Subclasses might have instruments stored differently or might not need this.

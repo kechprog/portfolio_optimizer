@@ -271,15 +271,14 @@ class App:
         enabled_allocators = self.allocator_manager.get_enabled_allocators_data()
         for alloc_data in enabled_allocators:
             allocator = alloc_data['instance']
-            allocator._last_computed_portfolio = None # Clear previous
             try:
-                # compute_allocations now returns a Portfolio object
+                # compute_allocations now returns a Portfolio object (with caching)
                 computed_portfolio = allocator.compute_allocations(fitting_start_dt, fitting_end_dt, plot_actual_end_dt)
                 
                 if not isinstance(computed_portfolio, Portfolio):
                     logger.error(f"Allocator {allocator.get_name()} did not return a Portfolio object. Type: {type(computed_portfolio)}")
                     any_allocator_failed_computation = True; continue
-                allocator._last_computed_portfolio = computed_portfolio # Store for display
+                # Note: _last_computed_portfolio is automatically set by the caching mechanism
 
                 # Determine the allocations to use for the out-of-sample plot period.
                 # These are the allocations active at fitting_end_dt (which is plot_start_dt)
