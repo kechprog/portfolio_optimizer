@@ -443,6 +443,13 @@ class App:
             'left_v_pane': self.left_v_pane.sashpos(0),
             'right_v_pane': self.right_v_pane.sashpos(0)
         }
+        
+        # Also get allocator manager pane position if it exists
+        if self.allocator_manager and hasattr(self.allocator_manager, 'main_paned_window'):
+            try:
+                pane_positions['allocator_manager_pane'] = self.allocator_manager.main_paned_window.sashpos(0)
+            except Exception:
+                pass
         state = {
             "fit_start_date": self.fit_start_date_entry.get(),
             "fit_end_date": self.fit_end_date_entry.get(),
@@ -499,6 +506,11 @@ class App:
                 self.root.after(100, lambda: self.main_h_pane.sashpos(0, pane_positions.get('main_h_pane')))
                 self.root.after(100, lambda: self.left_v_pane.sashpos(0, pane_positions.get('left_v_pane')))
                 self.root.after(100, lambda: self.right_v_pane.sashpos(0, pane_positions.get('right_v_pane')))
+                
+                # Restore allocator manager pane position
+                allocator_manager_pane_pos = pane_positions.get('allocator_manager_pane')
+                if allocator_manager_pane_pos is not None:
+                    self.root.after(200, lambda: self.allocator_manager.set_pane_position(allocator_manager_pane_pos))
 
             # Extract component states and pass to components
             # Handle both new format (allocator_manager_state) and old format (allocators) for backward compatibility
@@ -514,6 +526,12 @@ class App:
             self.allocator_manager = AllocatorManager(self.allocator_mgmt_frame, json_state=allocator_manager_state)
             self.allocator_manager.pack(fill="both", expand=True)
             self.allocator_manager.set_status_callback(self.set_status)
+            
+            # Restore allocator manager pane position from the allocator manager state
+            if allocator_manager_state and "allocator_manager_pane_position" in allocator_manager_state:
+                pane_pos = allocator_manager_state["allocator_manager_pane_position"]
+                if pane_pos is not None:
+                    self.root.after(200, lambda: self.allocator_manager.set_pane_position(pane_pos))
             
             self._update_allocator_selector_dropdown()
             self._refresh_allocations_display_area()

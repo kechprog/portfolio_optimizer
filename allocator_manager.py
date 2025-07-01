@@ -8,6 +8,7 @@ from allocator.allocator import PortfolioAllocator
 from allocator.manual import ManualAllocator
 from allocator.mpt.max_sharpe import MaxSharpeAllocator
 from allocator.mpt.min_volatility import MinVolatilityAllocator
+from allocator.merge import MergeAllocator
 from portfolio import Portfolio
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class AllocatorManager(ttk.Frame):
         }
         
         self.allocators_store: Dict[str, Dict[str, Any]] = {}
+        self.merge_allocators_store: Dict[str, Dict[str, Any]] = {}
         self.status_callback = None
         
         self._create_ui()
@@ -95,19 +97,30 @@ class AllocatorManager(ttk.Frame):
             text="Create Allocator", 
             command=self._on_create_allocator_button_click,
             style="Success.TButton"
+        ).pack(side="left", padx=(0, 5))
+        
+        ttk.Button(
+            top_bar, 
+            text="Create Merge Allocator", 
+            command=self._on_create_merge_allocator_button_click,
+            style="Info.TButton"
         ).pack(side="left")
 
-        # Scrollable list area for allocators
-        list_area = ttk.Frame(self)
-        list_area.pack(fill="both", expand=True, pady=5)
+        # Main content area with horizontal split
+        self.main_paned_window = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
+        self.main_paned_window.pack(fill="both", expand=True, pady=5)
         
-        self.allocators_canvas = tk.Canvas(list_area, borderwidth=0, highlightthickness=0)
+        # Regular allocators section (left side)
+        regular_allocators_frame = ttk.LabelFrame(self.main_paned_window, text="Regular Allocators", padding=5)
+        self.main_paned_window.add(regular_allocators_frame, weight=1)
+        
+        self.allocators_canvas = tk.Canvas(regular_allocators_frame, borderwidth=0, highlightthickness=0)
         self.allocators_list_scrollframe = ttk.Frame(self.allocators_canvas)
         
-        scrollbar = ttk.Scrollbar(list_area, orient="vertical", command=self.allocators_canvas.yview)
-        self.allocators_canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar1 = ttk.Scrollbar(regular_allocators_frame, orient="vertical", command=self.allocators_canvas.yview)
+        self.allocators_canvas.configure(yscrollcommand=scrollbar1.set)
         
-        scrollbar.pack(side="right", fill="y")
+        scrollbar1.pack(side="right", fill="y")
         self.allocators_canvas.pack(side="left", fill="both", expand=True)
         self.allocators_canvas.create_window((0, 0), window=self.allocators_list_scrollframe, anchor="nw")
         
@@ -115,10 +128,34 @@ class AllocatorManager(ttk.Frame):
             "<Configure>", 
             lambda e: self.allocators_canvas.configure(scrollregion=self.allocators_canvas.bbox("all"))
         )
+        
+        # Merge allocators section (right side)
+        merge_allocators_frame = ttk.LabelFrame(self.main_paned_window, text="Merge Allocators", padding=5)
+        self.main_paned_window.add(merge_allocators_frame, weight=1)
+        
+        self.merge_allocators_canvas = tk.Canvas(merge_allocators_frame, borderwidth=0, highlightthickness=0)
+        self.merge_allocators_list_scrollframe = ttk.Frame(self.merge_allocators_canvas)
+        
+        scrollbar2 = ttk.Scrollbar(merge_allocators_frame, orient="vertical", command=self.merge_allocators_canvas.yview)
+        self.merge_allocators_canvas.configure(yscrollcommand=scrollbar2.set)
+        
+        scrollbar2.pack(side="right", fill="y")
+        self.merge_allocators_canvas.pack(side="left", fill="both", expand=True)
+        self.merge_allocators_canvas.create_window((0, 0), window=self.merge_allocators_list_scrollframe, anchor="nw")
+        
+        self.merge_allocators_list_scrollframe.bind(
+            "<Configure>", 
+            lambda e: self.merge_allocators_canvas.configure(scrollregion=self.merge_allocators_canvas.bbox("all"))
+        )
 
     def _redraw_allocator_list_ui(self):
-        """Redraw the allocator list UI"""
+        """Redraw both allocator list UIs"""
+        # Clear regular allocators
         for widget in self.allocators_list_scrollframe.winfo_children():
+            widget.destroy()
+        
+        # Clear merge allocators
+        for widget in self.merge_allocators_list_scrollframe.winfo_children():
             widget.destroy()
         
         sorted_allocator_items = sorted(
@@ -183,8 +220,74 @@ class AllocatorManager(ttk.Frame):
             )
             del_btn.pack(side="left", padx=2)
         
+        # Draw merge allocators
+        sorted_merge_allocator_items = sorted(
+            self.merge_allocators_store.items(), 
+            key=lambda item: item[1]['instance'].get_name().lower()
+        )
+        
+        for allocator_id, data in sorted_merge_allocator_items:
+            allocator_instance = data['instance']
+            is_enabled_var = data['is_enabled_var']
+            
+            row_frame = ttk.Frame(self.merge_allocators_list_scrollframe)
+            row_frame.pack(fill="x", pady=2, padx=2)
+            
+            # Enabled checkbox
+            chk = ttk.Checkbutton(
+                row_frame, 
+                variable=is_enabled_var, 
+                text="", 
+                command=self._on_allocator_enable_changed
+            )
+            chk.pack(side="left", padx=(0, 2))
+            
+            # Name label
+            name_label = ttk.Label(
+                row_frame, 
+                text=allocator_instance.get_name(), 
+                width=20, 
+                anchor="w", 
+                relief="groove", 
+                padding=2
+            )
+            name_label.pack(side="left", padx=2, fill="x", expand=True)
+            
+            # Configure button
+            config_btn = ttk.Button(
+                row_frame, 
+                text=GEAR_ICON, 
+                width=3, 
+                style="Toolbutton.TButton",
+                command=lambda aid=allocator_id: self._on_configure_existing_merge_allocator(aid)
+            )
+            config_btn.pack(side="left", padx=2)
+
+            # Duplicate button
+            duplicate_btn = ttk.Button(
+                row_frame, 
+                text="⧉", 
+                width=3, 
+                style="Toolbutton.TButton",
+                command=lambda aid=allocator_id: self._on_duplicate_merge_allocator_prompt(aid)
+            )
+            duplicate_btn.pack(side="left", padx=2)
+
+            # Delete button
+            del_btn = ttk.Button(
+                row_frame, 
+                text=DELETE_ICON, 
+                width=3, 
+                style="Danger.Toolbutton.TButton",
+                command=lambda aid=allocator_id: self._on_delete_merge_allocator(aid)
+            )
+            del_btn.pack(side="left", padx=2)
+        
         self.allocators_list_scrollframe.update_idletasks()
         self.allocators_canvas.configure(scrollregion=self.allocators_canvas.bbox("all"))
+        
+        self.merge_allocators_list_scrollframe.update_idletasks()
+        self.merge_allocators_canvas.configure(scrollregion=self.merge_allocators_canvas.bbox("all"))
 
     def _on_allocator_enable_changed(self):
         """Handle allocator enable/disable changes"""
@@ -393,12 +496,239 @@ class AllocatorManager(ttk.Frame):
         self._set_status(f"Allocator '{new_name}' duplicated as {chosen_type}.", success=True)
         self._redraw_allocator_list_ui()
 
+    def _on_create_merge_allocator_button_click(self):
+        """Handle create merge allocator button click"""
+        # Get list of available regular allocators (excluding merge allocators to avoid circular dependencies)
+        available_allocators = [data['instance'] for data in self.allocators_store.values()]
+        
+        if not available_allocators:
+            messagebox.showwarning(
+                "Create Merge Allocator", 
+                "No regular allocators available to merge. Please create some allocators first.", 
+                parent=self.winfo_toplevel()
+            )
+            return
+        
+        new_merge_allocator_state = MergeAllocator.configure(
+            parent_window=self.winfo_toplevel(), 
+            existing_state=None,
+            available_allocators=available_allocators
+        )
+
+        if new_merge_allocator_state:
+            try:
+                new_allocator_name = str(new_merge_allocator_state.get('name', ''))
+                if not new_allocator_name:
+                    messagebox.showerror(
+                        "Create Merge Allocator", 
+                        "Merge allocator configuration did not return a valid name.", 
+                        parent=self.winfo_toplevel()
+                    )
+                    return
+
+                # Check for name conflicts with both regular and merge allocators
+                new_name_lower = new_allocator_name.lower()
+                for data in self.allocators_store.values():
+                    if data['instance'].get_name().lower() == new_name_lower:
+                        messagebox.showerror(
+                            "Create Merge Allocator", 
+                            f"An allocator with the name '{new_allocator_name}' already exists.", 
+                            parent=self.winfo_toplevel()
+                        )
+                        return
+                
+                for data in self.merge_allocators_store.values():
+                    if data['instance'].get_name().lower() == new_name_lower:
+                        messagebox.showerror(
+                            "Create Merge Allocator", 
+                            f"A merge allocator with the name '{new_allocator_name}' already exists.", 
+                            parent=self.winfo_toplevel()
+                        )
+                        return
+                
+                self._set_status(f"Creating merge allocator '{new_allocator_name}'...")
+                new_merge_allocator_instance = MergeAllocator(allocator_manager=self, **new_merge_allocator_state)
+                self._set_status(f"Merge allocator instance created successfully.")
+            except Exception as e:
+                messagebox.showerror(
+                    "Create Merge Allocator", 
+                    f"Failed to create merge allocator instance: {e}", 
+                    parent=self.winfo_toplevel()
+                )
+                self._set_status(f"Error creating merge allocator: {e}", error=True)
+                return
+
+            allocator_id = str(uuid.uuid4())
+            self.merge_allocators_store[allocator_id] = {
+                'instance': new_merge_allocator_instance, 
+                'is_enabled_var': tk.BooleanVar(value=True)
+            }
+            self._set_status(f"Merge allocator '{new_merge_allocator_instance.get_name()}' created and added to store.", success=True)
+            self._redraw_allocator_list_ui()
+        else: 
+            self._set_status(f"Merge allocator creation cancelled.")
+
+    def _on_configure_existing_merge_allocator(self, allocator_id_to_configure: str):
+        """Handle configure existing merge allocator"""
+        data_to_configure = self.merge_allocators_store.get(allocator_id_to_configure)
+        if not data_to_configure:
+            messagebox.showerror(
+                "Error", 
+                "Merge allocator not found for configuration.", 
+                parent=self.winfo_toplevel()
+            )
+            return
+        
+        existing_instance = data_to_configure['instance']
+        existing_state = existing_instance.get_state()
+        
+        # Get list of available regular allocators
+        available_allocators = [data['instance'] for data in self.allocators_store.values()]
+        
+        if not available_allocators:
+            messagebox.showwarning(
+                "Configure Merge Allocator", 
+                "No regular allocators available to merge.", 
+                parent=self.winfo_toplevel()
+            )
+            return
+
+        new_state_from_config = MergeAllocator.configure(
+            parent_window=self.winfo_toplevel(), 
+            existing_state=existing_state,
+            available_allocators=available_allocators
+        )
+
+        if new_state_from_config:
+            try:
+                new_allocator_name = str(new_state_from_config.get('name', ''))
+                if not new_allocator_name:
+                    messagebox.showerror(
+                        "Configure Merge Allocator", 
+                        "Merge allocator configuration did not return a valid name.", 
+                        parent=self.winfo_toplevel()
+                    )
+                    return
+
+                # Check for name conflicts
+                new_name_lower = new_allocator_name.lower()
+                for data in self.allocators_store.values():
+                    if data['instance'].get_name().lower() == new_name_lower:
+                        messagebox.showerror(
+                            "Configure Merge Allocator", 
+                            f"An allocator with the name '{new_allocator_name}' already exists.", 
+                            parent=self.winfo_toplevel()
+                        )
+                        return
+                
+                for aid, data in self.merge_allocators_store.items():
+                    if aid != allocator_id_to_configure and data['instance'].get_name().lower() == new_name_lower:
+                        messagebox.showerror(
+                            "Configure Merge Allocator", 
+                            f"A merge allocator with the name '{new_allocator_name}' already exists.", 
+                            parent=self.winfo_toplevel()
+                        )
+                        return
+                
+                reconfigured_instance = MergeAllocator(allocator_manager=self, **new_state_from_config)
+            except Exception as e:
+                messagebox.showerror(
+                    "Configure Merge Allocator", 
+                    f"Failed to reconfigure merge allocator instance: {e}", 
+                    parent=self.winfo_toplevel()
+                )
+                self._set_status(f"Error reconfiguring {existing_instance.get_name()}: {e}", error=True)
+                return
+
+            self.merge_allocators_store[allocator_id_to_configure]['instance'] = reconfigured_instance
+            self._set_status(f"Merge allocator '{reconfigured_instance.get_name()}' reconfigured.", success=True)
+            self._redraw_allocator_list_ui()
+        else:
+            self._set_status(f"Reconfiguration of '{existing_instance.get_name()}' cancelled.")
+
+    def _on_delete_merge_allocator(self, allocator_id_to_delete: str):
+        """Handle delete merge allocator"""
+        if allocator_id_to_delete in self.merge_allocators_store:
+            allocator_name = self.merge_allocators_store[allocator_id_to_delete]['instance'].get_name()
+            if messagebox.askyesno(
+                "Confirm Delete", 
+                f"Are you sure you want to delete merge allocator '{allocator_name}'?", 
+                parent=self.winfo_toplevel()
+            ):
+                del self.merge_allocators_store[allocator_id_to_delete]
+                self._set_status(f"Merge allocator '{allocator_name}' deleted.", success=True)
+                self._redraw_allocator_list_ui()
+        else:
+            messagebox.showerror(
+                "Error", 
+                "Merge allocator not found for deletion.", 
+                parent=self.winfo_toplevel()
+            )
+
+    def _on_duplicate_merge_allocator_prompt(self, allocator_id_to_duplicate: str):
+        """Handle duplicate merge allocator prompt"""
+        data = self.merge_allocators_store.get(allocator_id_to_duplicate)
+        if not data:
+            messagebox.showerror(
+                "Duplicate Error", 
+                "Merge allocator not found for duplication.", 
+                parent=self.winfo_toplevel()
+            )
+            return
+
+        original_instance = data['instance']
+        original_state = original_instance.get_state()
+        
+        # Get list of available regular allocators
+        available_allocators = [data['instance'] for data in self.allocators_store.values()]
+        
+        if not available_allocators:
+            messagebox.showwarning(
+                "Duplicate Merge Allocator", 
+                "No regular allocators available to merge.", 
+                parent=self.winfo_toplevel()
+            )
+            return
+
+        new_state = dict(original_state)
+        new_state['name'] = original_state.get('name', '') + " (copy)"
+        
+        new_state_from_config = MergeAllocator.configure(
+            parent_window=self.winfo_toplevel(), 
+            existing_state=new_state,
+            available_allocators=available_allocators
+        )
+        
+        if not new_state_from_config:
+            self._set_status("Merge allocator duplication cancelled.")
+            return
+        
+        try:
+            new_instance = MergeAllocator(allocator_manager=self, **new_state_from_config)
+        except Exception as e:
+            messagebox.showerror(
+                "Duplicate Error", 
+                f"Failed to duplicate merge allocator: {e}", 
+                parent=self.winfo_toplevel()
+            )
+            return
+
+        new_alloc_id = str(uuid.uuid4())
+        self.merge_allocators_store[new_alloc_id] = {
+            'instance': new_instance,
+            'is_enabled_var': tk.BooleanVar(value=True)
+        }
+        self._set_status(f"Merge allocator '{new_instance.get_name()}' duplicated.", success=True)
+        self._redraw_allocator_list_ui()
+
     def get_state(self) -> Dict[str, Any]:
         """Get the state of all allocators including sub-components"""
         state = {
-            "allocators": []
+            "allocators": [],
+            "merge_allocators": []
         }
 
+        # Save regular allocators
         for aid, data in self.allocators_store.items():
             instance = data['instance']
             allocator_type_name = None
@@ -420,13 +750,32 @@ class AllocatorManager(ttk.Frame):
                 "allocator_state": allocator_state_to_save 
             })
         
+        # Save merge allocators
+        for aid, data in self.merge_allocators_store.items():
+            instance = data['instance']
+            allocator_state_to_save = instance.get_state()
+            state["merge_allocators"].append({
+                "id": aid, 
+                "is_enabled": data['is_enabled_var'].get(),
+                "allocator_state": allocator_state_to_save 
+            })
+        
         return state
 
     def get_portfolios(self) -> List[Portfolio]:
         """Get list of all portfolios computed by enabled allocators"""
         portfolios = []
         
+        # Get portfolios from regular allocators
         for data in self.allocators_store.values():
+            if data['is_enabled_var'].get():  # Only include enabled allocators
+                allocator = data['instance']
+                portfolio = getattr(allocator, '_last_computed_portfolio', None)
+                if portfolio and isinstance(portfolio, Portfolio):
+                    portfolios.append(portfolio)
+        
+        # Get portfolios from merge allocators
+        for data in self.merge_allocators_store.values():
             if data['is_enabled_var'].get():  # Only include enabled allocators
                 allocator = data['instance']
                 portfolio = getattr(allocator, '_last_computed_portfolio', None)
@@ -439,7 +788,16 @@ class AllocatorManager(ttk.Frame):
         """Get list of allocator names that have computed portfolios"""
         names = []
         
+        # Get names from regular allocators
         for data in self.allocators_store.values():
+            if data['is_enabled_var'].get():  # Only include enabled allocators
+                allocator = data['instance']
+                portfolio = getattr(allocator, '_last_computed_portfolio', None)
+                if portfolio and isinstance(portfolio, Portfolio):
+                    names.append(allocator.get_name())
+        
+        # Get names from merge allocators
+        for data in self.merge_allocators_store.values():
             if data['is_enabled_var'].get():  # Only include enabled allocators
                 allocator = data['instance']
                 portfolio = getattr(allocator, '_last_computed_portfolio', None)
@@ -452,7 +810,18 @@ class AllocatorManager(ttk.Frame):
         """Get data for enabled allocators for plotting purposes"""
         enabled_allocators_data = []
         
+        # Get data from regular allocators
         for aid, data in self.allocators_store.items():
+            if data['is_enabled_var'].get():
+                allocator = data['instance']
+                enabled_allocators_data.append({
+                    'id': aid,
+                    'instance': allocator, 
+                    'is_enabled_var': data['is_enabled_var']
+                })
+        
+        # Get data from merge allocators
+        for aid, data in self.merge_allocators_store.items():
             if data['is_enabled_var'].get():
                 allocator = data['instance']
                 enabled_allocators_data.append({
@@ -465,11 +834,21 @@ class AllocatorManager(ttk.Frame):
 
     def get_allocator_names(self) -> List[str]:
         """Get sorted list of allocator names"""
-        return sorted([data['instance'].get_name() for data in self.allocators_store.values()])
+        names = []
+        # Get names from regular allocators
+        names.extend([data['instance'].get_name() for data in self.allocators_store.values()])
+        # Get names from merge allocators
+        names.extend([data['instance'].get_name() for data in self.merge_allocators_store.values()])
+        return sorted(names)
 
     def get_allocator_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         """Get allocator data by name"""
+        # Check regular allocators first
         for data in self.allocators_store.values():
+            if data['instance'].get_name() == name:
+                return data
+        # Check merge allocators
+        for data in self.merge_allocators_store.values():
             if data['instance'].get_name() == name:
                 return data
         return None
@@ -477,7 +856,9 @@ class AllocatorManager(ttk.Frame):
     def _load_from_state(self, json_state: Dict[str, Any]):
         """Load allocators from JSON state"""
         self.allocators_store.clear()
+        self.merge_allocators_store.clear()
         
+        # Load regular allocators
         for saved_alloc_data in json_state.get("allocators", []):
             allocator_type_name = saved_alloc_data.get("type_name")
             AllocatorClass = self.available_allocator_types.get(allocator_type_name)
@@ -513,4 +894,40 @@ class AllocatorManager(ttk.Frame):
                     'is_enabled_var': tk.BooleanVar(value=saved_alloc_data.get("is_enabled", True))
                 }
         
+        # Load merge allocators
+        for saved_merge_data in json_state.get("merge_allocators", []):
+            allocator_state_from_save = saved_merge_data.get("allocator_state")
+            if not allocator_state_from_save or not isinstance(allocator_state_from_save, dict):
+                logger.warning(f"Missing/invalid 'allocator_state' for merge allocator in saved state. Skipping.")
+                continue
+            
+            if 'name' not in allocator_state_from_save:
+                allocator_state_from_save['name'] = f"Unnamed Merge Allocator {str(uuid.uuid4())[:4]}"
+            
+            allocator_id = saved_merge_data.get("id", str(uuid.uuid4()))
+            
+            try:
+                new_instance = MergeAllocator(allocator_manager=self, **allocator_state_from_save)
+            except Exception as e: 
+                loaded_name = allocator_state_from_save.get('name', 'unknown merge allocator')
+                logger.error(f"Failed to initialize merge allocator '{loaded_name}' from saved state: {e}", exc_info=True)
+                self._set_status(f"Error loading {loaded_name}: {e}", error=True)
+                continue
+            
+            if new_instance: 
+                self.merge_allocators_store[allocator_id] = {
+                    'instance': new_instance, 
+                    'is_enabled_var': tk.BooleanVar(value=saved_merge_data.get("is_enabled", True))
+                }
+        
         self._redraw_allocator_list_ui()
+        
+    def set_pane_position(self, position: Optional[int]):
+        """Set the position of the main paned window sash"""
+        if position is not None and hasattr(self, 'main_paned_window'):
+            try:
+                # Use after_idle to ensure the window is fully initialized
+                self.after_idle(lambda: self.main_paned_window.sashpos(0, position))
+            except Exception:
+                # Ignore errors when setting sash position
+                pass

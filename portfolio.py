@@ -1,6 +1,6 @@
 
 from datetime import date, timedelta
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import pandas as pd
 from data_getter import av_fetcher
 
@@ -152,16 +152,130 @@ class Portfolio:
         ax.set_ylabel("Allocation (%)")
         ax.legend(loc='upper left')
 
-if __name__ == "__main__":
-    import matplotlib.pyplot as plt
+    @staticmethod
+    def merge(portfolios_with_weights: List[Tuple['Portfolio', float]], 
+              start_date: date, end_date: date) -> 'Portfolio':
+        """
+        Merges multiple portfolios with specified weights into a single portfolio.
+        
+        This function combines portfolios like Riemann partitions - it finds all segment
+        boundaries across all portfolios and creates a new portfolio where each segment
+        contains the weighted combination of allocations from all constituent portfolios.
+        
+        Args:
+            portfolios_with_weights: List of tuples (portfolio, weight) where weights should sum to 1.0
+            start_date: Start date for the merged portfolio
+            end_date: End date for the merged portfolio
+            
+        Returns:
+            A new Portfolio object containing the merged allocations
+            
+        Raises:
+            ValueError: If weights don't sum to approximately 1.0
+            TypeError: If inputs are not of correct types
+        """
+        if not portfolios_with_weights:
+            # Return empty portfolio if no input portfolios
+            empty_portfolio = Portfolio(start_date)
+            empty_portfolio.append(end_date, {})
+            return empty_portfolio
+        
+        # Validate weights
+        total_weight = sum(weight for _, weight in portfolios_with_weights)
+        if abs(total_weight - 1.0) > 1e-6:
+            raise ValueError(f"Portfolio weights must sum to 1.0, got {total_weight}")
+        
+        # Collect all segment boundaries from all portfolios
+        all_boundaries = {start_date, end_date}
+        
+        for portfolio, _ in portfolios_with_weights:
+            # Get all segments up to end_date
+            segments = portfolio.get(end_date)
+            for segment in segments:
+                all_boundaries.add(segment['start_date'])
+                all_boundaries.add(segment['end_date'])
+        
+        # Sort boundaries to create intervals
+        sorted_boundaries = sorted(all_boundaries)
+        
+        # Create the merged portfolio
+        merged_portfolio = Portfolio(start_date)
+        
+        # Process each interval between consecutive boundaries
+        for i in range(len(sorted_boundaries) - 1):
+            interval_start = sorted_boundaries[i]
+            interval_end = sorted_boundaries[i + 1]
+            
+            # Skip intervals outside our target range
+            if interval_end <= start_date or interval_start >= end_date:
+                continue
+            
+            # Clip interval to our target range
+            actual_start = max(interval_start, start_date)
+            actual_end = min(interval_end, end_date)
+            
+            if actual_start >= actual_end:
+                continue
+            
+            # Find the midpoint of this interval to query allocations
+            midpoint = actual_start + (actual_end - actual_start) // 2
+            
+            # Combine allocations from all portfolios for this interval
+            combined_allocations = {}
+            
+            for portfolio, weight in portfolios_with_weights:
+                # Get segments that cover the midpoint
+                covering_segments = portfolio.get(midpoint)
+                
+                if covering_segments:
+                    # Find the segment that actually contains the midpoint
+                    active_allocation = None
+                    for segment in covering_segments:
+                        if segment['start_date'] <= midpoint < segment['end_date']:
+                            active_allocation = segment['allocations']
+                            break
+                    
+                    # If no exact match, use the last segment
+                    if active_allocation is None and covering_segments:
+                        active_allocation = covering_segments[-1]['allocations']
+                    
+                    # Add weighted allocations
+                    if active_allocation:
+                        for instrument, allocation in active_allocation.items():
+                            if instrument not in combined_allocations:
+                                combined_allocations[instrument] = 0.0
+                            combined_allocations[instrument] += allocation * weight
+            
+            # Filter out negligible allocations
+            filtered_allocations = {
+                instrument: alloc 
+                for instrument, alloc in combined_allocations.items() 
+                if abs(alloc) > 1e-9
+            }
+            
+            # Add this segment to the merged portfolio
+            if filtered_allocations or i == len(sorted_boundaries) - 2:  # Always add last segment
+                merged_portfolio.append(actual_end, filtered_allocations)
+        
+        return merged_portfolio
 
-    # Create a portfolio
+if __name__ == "__main__":
+    # Simple test of Portfolio functionality
     portfolio = Portfolio(start_date=date(2023, 1, 1))
     portfolio.append(date(2023, 6, 30), {'AAPL': 0.5, 'GOOG': 0.5})
     portfolio.append(date(2023, 12, 31), {'AAPL': 0.3, 'GOOG': 0.3, 'MSFT': 0.4})
-
-    # Plot the distribution
-    fig, ax = plt.subplots(figsize=(10, 6))
-    portfolio.plot_distribution(ax, date(2023, 12, 31))
-    ax.set_title("Portfolio Allocation Distribution")
-    plt.savefig('distribution_plot.png')
+    
+    print(f"Portfolio has {len(portfolio.segments)} segments")
+    
+    # Test merge functionality
+    portfolio2 = Portfolio(start_date=date(2023, 1, 1))
+    portfolio2.append(date(2023, 12, 31), {'NVDA': 0.6, 'TSLA': 0.4})
+    
+    merged = Portfolio.merge(
+        [(portfolio, 0.7), (portfolio2, 0.3)], 
+        date(2023, 1, 1), 
+        date(2023, 12, 31)
+    )
+    
+    print(f"Merged portfolio has {len(merged.segments)} segments")
+    print("Portfolio merge test completed successfully")
