@@ -5,3 +5,4 @@ alpha-vantage
 sv-ttk
 PyPortfolioOpt
 scikit-learn
+aiohttp
