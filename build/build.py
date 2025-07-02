@@ -1,10 +1,9 @@
 # build.py
 import os
 import sys
-import subprocess
 from pathlib import Path
 
-# === Configuration ===
+# Configuration
 BASE_DIR = Path(__file__).parent.resolve()
 ICON_PATH = str(BASE_DIR / "icon.png")  # Path to your application icon
 print(ICON_PATH)
