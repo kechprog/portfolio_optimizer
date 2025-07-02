@@ -163,6 +163,13 @@ def _fetch_single_instrument(args: Tuple[str, Optional[str], pd.Timestamp, pd.Ti
     """
     instrument_ticker, api_key, start_date, end_date, cache_dir = args
     
+    # Essential for compiled executables - each worker process needs to handle its own .env loading
+    if getattr(sys, 'frozen', False):
+        # Running as compiled executable
+        env_path = os.path.join(sys._MEIPASS, '.env')
+        load_dotenv(env_path)
+        # Use the api_key from args since it's already validated in the parent process
+    
     # Set up logging for this process
     process_logger = logging.getLogger(f"{__name__}.{instrument_ticker}")
     
@@ -246,6 +253,15 @@ class AsyncDataFetcher:
             timeout_per_instrument: Timeout in seconds for each instrument fetch
             cache_dir: Directory for persistent cache. Defaults to temp directory
         """
+        # Configure multiprocessing for compiled executables
+        if getattr(sys, 'frozen', False):
+            # Running as compiled executable - use spawn method for better compatibility
+            try:
+                mp.set_start_method('spawn', force=True)
+            except RuntimeError:
+                # Start method already set, this is OK
+                pass
+        
         # Handle .env file location for both development and compiled executable
         if getattr(sys, 'frozen', False):
             # Running as compiled executable
@@ -305,8 +321,17 @@ class AsyncDataFetcher:
         total_count = len(instruments)
         
         # Use ProcessPoolExecutor for better control and error handling
+        # For compiled executables, use mp_context for better compatibility
+        mp_context = None
+        if getattr(sys, 'frozen', False):
+            try:
+                mp_context = mp.get_context('spawn')
+            except RuntimeError:
+                # Fallback if spawn is not available
+                mp_context = None
+        
         try:
-            with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+            with ProcessPoolExecutor(max_workers=self.max_workers, mp_context=mp_context) as executor:
                 # Submit all tasks
                 future_to_ticker = {
                     executor.submit(_fetch_single_instrument, args): args[0] 
@@ -375,6 +400,15 @@ class AsyncDataFetcher:
                     
         except Exception as e:
             logger.error(f"Error in ProcessPoolExecutor: {e}", exc_info=True)
+            
+            # For compiled executables, try a fallback single-threaded approach
+            if getattr(sys, 'frozen', False):
+                logger.info("Attempting fallback single-threaded data fetching for compiled executable")
+                try:
+                    return self._fetch_data_sequential(instruments, start, end, progress_callback)
+                except Exception as fallback_error:
+                    logger.error(f"Fallback sequential fetch also failed: {fallback_error}", exc_info=True)
+            
             # If executor fails completely, mark all instruments as failed
             return pd.DataFrame(), list(instruments)
         
@@ -399,6 +433,68 @@ class AsyncDataFetcher:
             # Return empty DataFrame and mark all instruments as flawed
             all_tickers = list(instruments)
             return pd.DataFrame(), all_tickers
+    
+    def _fetch_data_sequential(self, 
+                             instruments: Set[str], 
+                             start: pd.Timestamp, 
+                             end: pd.Timestamp,
+                             progress_callback: Optional[Callable[[str, int, int], None]] = None) -> Tuple[pd.DataFrame, List[str]]:
+        """
+        Fallback sequential data fetching for environments where multiprocessing fails.
+        """
+        logger.info(f"Sequential fetch for {len(instruments)} instruments")
+        
+        successful_data: Dict[str, pd.DataFrame] = {}
+        flawed_instruments: List[str] = []
+        completed_count = 0
+        total_count = len(instruments)
+        
+        for ticker in instruments:
+            completed_count += 1
+            try:
+                # Call the worker function directly (no multiprocessing)
+                args = (ticker, self.api_key, start, end, self.cache_dir)
+                result_ticker, dataframe, error_msg = _fetch_single_instrument(args)
+                
+                if dataframe is not None and not dataframe.empty:
+                    # Add multi-index columns
+                    dataframe.columns = pd.MultiIndex.from_product(
+                        [list(dataframe.columns), [result_ticker]], 
+                        names=["Field", "Ticker"]
+                    )
+                    successful_data[result_ticker] = dataframe
+                    logger.info(f"Successfully processed {result_ticker} ({completed_count}/{total_count})")
+                else:
+                    flawed_instruments.append(result_ticker)
+                    logger.warning(f"No data for {result_ticker}: {error_msg}")
+                
+                # Call progress callback if provided
+                if progress_callback:
+                    try:
+                        progress_callback(ticker, completed_count, total_count)
+                    except Exception as e:
+                        logger.warning(f"Progress callback error: {e}")
+                        
+            except Exception as e:
+                flawed_instruments.append(ticker)
+                logger.error(f"Error processing {ticker}: {e}", exc_info=True)
+        
+        # Combine successful data
+        if not successful_data:
+            logger.info("No successful data from sequential fetch")
+            return pd.DataFrame(), flawed_instruments
+        
+        try:
+            # Concatenate along columns (axis=1)
+            data_frames = list(successful_data.values())
+            final_df = pd.concat(data_frames, axis=1).sort_index()
+            
+            logger.info(f"Sequential fetch completed: {len(successful_data)} instruments. Failed: {len(flawed_instruments)}")
+            return final_df, flawed_instruments
+            
+        except Exception as e:
+            logger.error(f"Error during sequential concatenation: {e}", exc_info=True)
+            return pd.DataFrame(), list(instruments)
     
     def clear_cache(self, specific_instruments: Optional[Set[str]] = None, memory_only: bool = False) -> None:
         """
@@ -498,4 +594,9 @@ def _create_fetcher() -> Callable[[Set[str], pd.Timestamp, pd.Timestamp], Tuple[
 
 
 # Create the main fetcher (now using async implementation)
-av_fetcher = _create_fetcher()
+# Protect this for compiled executables
+if __name__ != '__main__':
+    av_fetcher = _create_fetcher()
+else:
+    # If this module is run directly, provide a simple test interface
+    av_fetcher = None
