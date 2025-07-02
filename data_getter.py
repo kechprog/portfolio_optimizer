@@ -3,6 +3,7 @@ import logging
 import pandas as pd
 from typing import Set, List, Dict, Callable, Tuple, Optional, Any
 import os
+import sys
 import multiprocessing as mp
 import time
 from concurrent.futures import ProcessPoolExecutor, TimeoutError, as_completed
@@ -245,7 +246,15 @@ class AsyncDataFetcher:
             timeout_per_instrument: Timeout in seconds for each instrument fetch
             cache_dir: Directory for persistent cache. Defaults to temp directory
         """
-        load_dotenv()
+        # Handle .env file location for both development and compiled executable
+        if getattr(sys, 'frozen', False):
+            # Running as compiled executable
+            env_path = os.path.join(sys._MEIPASS, '.env')
+        else:
+            # Running as script - look in project root
+            env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+        
+        load_dotenv(env_path)
         self.api_key = os.getenv("ALPHA_KEY")
         if not self.api_key:
             raise ValueError("ALPHA_KEY environment variable is required")

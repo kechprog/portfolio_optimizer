@@ -6,9 +6,10 @@ from pathlib import Path
 
 # === Configuration ===
 BASE_DIR = Path(__file__).parent.resolve()
+PROJECT_ROOT = BASE_DIR.parent  # Go up one level to project root
 ICON_PATH = str(BASE_DIR / "icon.png")  # Path to your application icon
 print(ICON_PATH)
-ENV_PATH = str(BASE_DIR / ".env")  # Path to your environment file
+ENV_PATH = str(PROJECT_ROOT / ".env")  # Path to your environment file
 APP_NAME = "PortfolioOptimizer"
 MAIN_SCRIPT = "../app.py"
 TEMP_DIR = "build_temp"
@@ -21,7 +22,7 @@ PYINSTALLER_OPTIONS = [
     f"--distpath=dist",
     f"--name={APP_NAME}",
     "--optimize=2",
-    # f"--add-data={ENV_PATH}{os.pathsep}.",  # Include .env
+    f"--add-data={ENV_PATH}{os.pathsep}.",  # Include .env
 ]
 
 # Resize icon and convert to ICO format (if needed)
@@ -58,14 +59,19 @@ if __name__ == "__main__":
     
     # 2. Ensure .env exists
     if not Path(ENV_PATH).exists():
-        print(f"Warning: .env file not found at {ENV_PATH}")
+        print(f"ERROR: .env file not found at {ENV_PATH}")
+        print("The .env file is required for the application to work properly.")
+        print("Please create the .env file with your Alpha Vantage API key before building.")
+        sys.exit(1)
+    else:
+        print(f"Found .env file at {ENV_PATH}")
     
-    # 4. Run PyInstaller
+    # 3. Run PyInstaller
     print("Running PyInstaller...")
     from PyInstaller import __main__ as pyi_main
     pyi_main.run([*PYINSTALLER_OPTIONS, str(BASE_DIR / MAIN_SCRIPT)])
     
-    # 5. Cleanup (optional)
+    # 4. Cleanup (optional)
     # Add cleanup logic here if needed
     
     print(f"\nBuild complete! Executable is in: {BASE_DIR}/dist")
