@@ -1,7 +1,5 @@
 # build.py
 import os
-import sys
-import subprocess
 from pathlib import Path
 
 # === Configuration ===
@@ -39,6 +37,12 @@ PYINSTALLER_OPTIONS = [
     "--hidden-import=scipy._lib._ccallback",
     "--hidden-import=scipy._cyutility",
     "--collect-submodules=scipy",
+    "--hidden-import=aiohttp",
+    "--hidden-import=aiohttp._http_parser",
+    "--hidden-import=aiohttp._websocket",
+    "--hidden-import=aiohttp._http_writer",
+    "--hidden-import=aiohttp.worker",
+    "--collect-submodules=aiohttp",
     f"--add-data={BASE_DIR.parent / '.env'}{os.pathsep}.",  # Include .env
 ]
 
@@ -53,7 +57,7 @@ def prepare_icon(input_path, output_path):
     resized_images = []
     
     for size in sizes:
-        resize_img = original.resize(size, Image.LANCZOS)
+        resize_img = original.resize(size, Image.LANCZOS) # type: ignore
         resized_images.append(resize_img)
     
     resized_images[0].save(output_path, format="ICO", sizes=[s for s in sizes])
@@ -87,3 +91,4 @@ if __name__ == "__main__":
     # Add cleanup logic here if needed
     
     print(f"\nBuild complete! Executable is in: {BASE_DIR}/dist")
+    

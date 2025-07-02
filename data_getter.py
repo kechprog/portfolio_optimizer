@@ -5,7 +5,8 @@ from typing import Set, List, Dict, Callable, Tuple, Optional
 import os
 import sys
 from dotenv import load_dotenv
-from alpha_vantage.timeseries import TimeSeries
+import aiohttp
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,7 @@ def _get_resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller"""
     try:
         # PyInstaller creates a temp folder and stores path in _MEIPASS
-        base_path = sys._MEIPASS
+        base_path = sys._MEIPASS  # type: ignore
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
@@ -26,81 +27,164 @@ def _create_fetcher() -> Callable[[Set[str], pd.Timestamp, pd.Timestamp], Tuple[
     cache: Dict[str, pd.DataFrame] = {}
     key = os.getenv("ALPHA_KEY")
 
-    col_map = {
-        "open": "Open",
-        "high": "High",
-        "low": "Low",
-        "close": "Close",
-        "adjusted close": "AdjClose",
-        "volume": "Volume",
-        "dividend amount": "DividendAmount", # Corrected typo
-        "split coefficient": "SplitCoef"
-    }
+
+    async def fetch_ticker_data(session: aiohttp.ClientSession, ticker: str) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
+        """Fetch data for a single ticker asynchronously"""
+        url = "https://www.alphavantage.co/query"
+        params = {
+            "function": "TIME_SERIES_DAILY_ADJUSTED",
+            "symbol": ticker,
+            "apikey": key,
+            "outputsize": "full",
+            "datatype": "json"
+        }
+        
+        try:
+            logger.info(f"Fetching data for {ticker} from API...")
+            async with session.get(url, params=params) as response:
+                if response.status != 200:
+                    logger.error(f"API Error for {ticker}: HTTP {response.status}")
+                    return None, ticker
+                
+                data = await response.json()
+                
+                # Check for API error messages
+                if "Error Message" in data:
+                    logger.error(f"API Error for {ticker}: {data['Error Message']}")
+                    return None, ticker
+                elif "Note" in data:
+                    logger.error(f"API Rate Limit for {ticker}: {data['Note']}")
+                    return None, ticker
+                
+                # Extract time series data
+                time_series_key = "Time Series (Daily)"
+                if time_series_key not in data:
+                    logger.error(f"No time series data found for {ticker}")
+                    return None, ticker
+                
+                time_series = data[time_series_key]
+                
+                # Convert to DataFrame
+                df_data = []
+                for date_str, daily_data in time_series.items():
+                    row = {
+                        'date': pd.to_datetime(date_str),
+                        'Open': float(daily_data['1. open']),
+                        'High': float(daily_data['2. high']),
+                        'Low': float(daily_data['3. low']),
+                        'Close': float(daily_data['4. close']),
+                        'AdjClose': float(daily_data['5. adjusted close']),
+                        'Volume': int(daily_data['6. volume']),
+                        'DividendAmount': float(daily_data['7. dividend amount']),
+                        'SplitCoef': float(daily_data['8. split coefficient'])
+                    }
+                    df_data.append(row)
+                
+                df = pd.DataFrame(df_data)
+                df.set_index('date', inplace=True)
+                df.sort_index(inplace=True)
+                
+                # Validate for NaNs
+                if df.isnull().values.any():
+                    logger.warning(f"Instrument {ticker}: Fetched data contains NaN values")
+                    return None, ticker
+                
+                logger.info(f"Successfully fetched data for {ticker}")
+                return df, None
+                
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout error for {ticker}")
+            return None, ticker
+        except Exception as e:
+            logger.error(f"Error fetching {ticker}: {e}", exc_info=True)
+            return None, ticker
+
+    async def fetch_all_tickers(tickers: List[str]) -> Tuple[Dict[str, pd.DataFrame], List[str]]:
+        """Fetch data for all tickers concurrently"""
+        results = {}
+        flawed = []
+        
+        # Create session with timeout
+        timeout = aiohttp.ClientTimeout(total=30)
+        connector = aiohttp.TCPConnector(limit=5)  # Limit concurrent connections
+        
+        async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+            # Create tasks for all tickers
+            tasks = [fetch_ticker_data(session, ticker) for ticker in tickers]
+            
+            # Execute all tasks concurrently
+            responses = await asyncio.gather(*tasks)
+            
+            # Process results
+            for ticker, (df, error_ticker) in zip(tickers, responses):
+                if df is not None:
+                    results[ticker] = df
+                else:
+                    flawed.append(error_ticker or ticker)
+        
+        return results, flawed
 
     def _inner(instruments: Set[str], start: pd.Timestamp, end: pd.Timestamp) -> Tuple[pd.DataFrame, List[str]]:
         flawed: List[str] = []
         data_to_combine: List[pd.DataFrame] = []
+        tickers_to_fetch: List[str] = []
 
-        for instrument_ticker in instruments: # Expects uppercase tickers
-            df_for_period: Optional[pd.DataFrame] = None
-
+        # Check cache first
+        for instrument_ticker in instruments:
             if instrument_ticker in cache:
                 logger.info(f"Cache hit for: `{instrument_ticker}` (full data)")
                 full_instrument_df = cache[instrument_ticker]
                 # Filter for the period
                 df_for_period = full_instrument_df[(start <= full_instrument_df.index) & (full_instrument_df.index <= end)]
+                
+                if df_for_period.empty:
+                    logger.warning(f"Instrument {instrument_ticker}: No data points found within the requested period")
+                    flawed.append(instrument_ticker)
+                    continue
+                
+                df_for_period.columns = pd.MultiIndex.from_product(
+                    [df_for_period.columns.tolist(), [instrument_ticker]], 
+                    names=["Field", "Ticker"]
+                )
+                data_to_combine.append(df_for_period)
             else:
-                logger.info(f"Cache miss for: `{instrument_ticker}`. Fetching from API.")
-                timeseries_client = TimeSeries(key, output_format="pandas")
-                try:
-                    # Fetch full data
-                    raw_df_from_api, _ = timeseries_client.get_daily_adjusted(instrument_ticker, outputsize="full") # type: ignore
-                    
-                    # Process columns
-                    current_columns = list(raw_df_from_api.columns)
-                    mapped_columns = []
-                    for col_name in current_columns:
-                        processed_col_name = col_name.split('. ', 1)[-1] if '. ' in col_name else col_name
-                        mapped_columns.append(col_map.get(processed_col_name.lower(), processed_col_name))
-                    raw_df_from_api.columns = mapped_columns
-                    raw_df_from_api.index = pd.to_datetime(raw_df_from_api.index)
+                tickers_to_fetch.append(instrument_ticker)
 
-                    # Validate for NaNs in the raw fetched data BEFORE caching
-                    if raw_df_from_api.isnull().values.any():
-                        logger.warning(f"Instrument {instrument_ticker}: Fetched data contains NaN values. Will not cache or use.")
-                        flawed.append(instrument_ticker)
-                        continue # Move to the next instrument
-
-                    # Cache the full, validated DataFrame
-                    cache[instrument_ticker] = raw_df_from_api.copy()
-                    logger.info(f"API Fetch: Successfully fetched and cached full validated data for {instrument_ticker}.")
-                    
-                    # Now, filter the newly fetched data for the requested period
-                    df_for_period = raw_df_from_api[(start <= raw_df_from_api.index) & (raw_df_from_api.index <= end)]
-
-                except Exception as e:
-                    logger.error(f"API Fetch Error for {instrument_ticker}: {e}", exc_info=True)
-                    flawed.append(instrument_ticker)
-                    continue # Move to the next instrument
+        # Fetch missing tickers asynchronously
+        if tickers_to_fetch:
+            logger.info(f"Fetching {len(tickers_to_fetch)} tickers from API...")
             
-            if df_for_period is None : 
-                 if instrument_ticker not in flawed: 
-                    logger.warning(f"Instrument {instrument_ticker}: df_for_period is None unexpectedly after cache/fetch logic. Marking as flawed.")
-                    flawed.append(instrument_ticker)
-                 continue
-
-            if df_for_period.empty:
-                logger.warning(f"Instrument {instrument_ticker}: No data points found within the requested period {start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')} (after cache/fetch).")
-                if instrument_ticker not in flawed: # Not an API error, but no data for period
-                    flawed.append(instrument_ticker)
-                continue 
+            # Run async fetch
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                fetched_data, fetch_errors = loop.run_until_complete(
+                    fetch_all_tickers(tickers_to_fetch)
+                )
+            finally:
+                loop.close()
             
-            df_for_period.columns = pd.MultiIndex.from_product(
-                [df_for_period.columns, [instrument_ticker]], 
-                names=["Field", "Ticker"]
-            )
-            data_to_combine.append(df_for_period)
-            logger.info(f"Processed {instrument_ticker} for period {start.strftime('%Y-%m-%d')}-{end.strftime('%Y-%m-%d')}. Shape: {df_for_period.shape}")
+            # Process fetched data
+            flawed.extend(fetch_errors)
+            
+            for ticker, df in fetched_data.items():
+                # Cache the full data
+                cache[ticker] = df.copy()
+                
+                # Filter for the requested period
+                df_for_period = df[(start <= df.index) & (df.index <= end)]
+                
+                if df_for_period.empty:
+                    logger.warning(f"Instrument {ticker}: No data points found within the requested period")
+                    flawed.append(ticker)
+                    continue
+                
+                df_for_period.columns = pd.MultiIndex.from_product(
+                    [df_for_period.columns.tolist(), [ticker]], 
+                    names=["Field", "Ticker"]
+                )
+                data_to_combine.append(df_for_period)
+                logger.info(f"Processed {ticker} for period. Shape: {df_for_period.shape}")
 
         if not data_to_combine:
             logger.info("No data to combine after processing all instruments.")
