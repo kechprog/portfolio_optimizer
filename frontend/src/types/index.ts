@@ -1,29 +1,63 @@
 // Allocator types
 export type AllocatorType = 'manual' | 'max_sharpe' | 'min_volatility';
 
+// Shared types
+export interface UpdateInterval {
+  value: number;
+  unit: 'days' | 'weeks' | 'months';
+}
+
+// Manual Allocator Config
 export interface ManualAllocatorConfig {
   name: string;
   allocations: Record<string, number>;
 }
 
-export interface MPTAllocatorConfig {
+// Max Sharpe Allocator Config
+export interface MaxSharpeAllocatorConfig {
   name: string;
   instruments: string[];
   allow_shorting: boolean;
   use_adj_close: boolean;
-  update_enabled: boolean;
-  update_interval_value?: number;
-  update_interval_unit?: 'days' | 'weeks' | 'months';
+  update_interval?: UpdateInterval | null;
 }
 
-export type AllocatorConfig = ManualAllocatorConfig | MPTAllocatorConfig;
+// Min Volatility Allocator Config
+export interface MinVolatilityAllocatorConfig {
+  name: string;
+  instruments: string[];
+  allow_shorting: boolean;
+  use_adj_close: boolean;
+  update_interval?: UpdateInterval | null;
+  // Target annual return (e.g., 0.1 for 10%) - null/undefined means pure min volatility
+  target_return?: number | null;
+}
 
-export interface Allocator {
+export type AllocatorConfig = ManualAllocatorConfig | MaxSharpeAllocatorConfig | MinVolatilityAllocatorConfig;
+
+// Typed allocator interfaces
+export interface ManualAllocator {
   id: string;
-  type: AllocatorType;
-  config: AllocatorConfig;
+  type: 'manual';
+  config: ManualAllocatorConfig;
   enabled: boolean;
 }
+
+export interface MaxSharpeAllocator {
+  id: string;
+  type: 'max_sharpe';
+  config: MaxSharpeAllocatorConfig;
+  enabled: boolean;
+}
+
+export interface MinVolatilityAllocator {
+  id: string;
+  type: 'min_volatility';
+  config: MinVolatilityAllocatorConfig;
+  enabled: boolean;
+}
+
+export type Allocator = ManualAllocator | MaxSharpeAllocator | MinVolatilityAllocator;
 
 // Portfolio segment
 export interface PortfolioSegment {

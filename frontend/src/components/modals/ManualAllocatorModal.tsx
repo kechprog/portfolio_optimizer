@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Modal } from './Modal';
+import { Plus, X } from 'lucide-react';
 import { Allocator, ManualAllocatorConfig } from '../../types';
-import './ManualAllocatorModal.css';
 
 interface ManualAllocatorModalProps {
   isOpen: boolean;
@@ -35,7 +35,7 @@ export const ManualAllocatorModal: React.FC<ManualAllocatorModalProps> = ({
         const allocationRows = Object.entries(config.allocations).map(([ticker, allocation]) => ({
           id: crypto.randomUUID(),
           ticker,
-          allocation: allocation * 100, // Convert to percentage
+          allocation: allocation * 100,
         }));
         setRows(allocationRows.length > 0 ? allocationRows : [{ id: crypto.randomUUID(), ticker: '', allocation: 0 }]);
       } else {
@@ -72,7 +72,7 @@ export const ManualAllocatorModal: React.FC<ManualAllocatorModalProps> = ({
     const allocations: Record<string, number> = {};
     rows.forEach(row => {
       if (row.ticker.trim()) {
-        allocations[row.ticker.trim()] = row.allocation / 100; // Convert back to decimal
+        allocations[row.ticker.trim()] = row.allocation / 100;
       }
     });
 
@@ -90,37 +90,41 @@ export const ManualAllocatorModal: React.FC<ManualAllocatorModalProps> = ({
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={allocator ? 'Edit Manual Allocator' : 'New Manual Allocator'}>
-      <div className="manual-allocator-form">
-        <div className="form-group">
-          <label className="form-label" htmlFor="allocator-name">
+      <div className="flex flex-col gap-5">
+        {/* Name Input */}
+        <div>
+          <label className="block text-sm font-medium text-text-secondary mb-2" htmlFor="allocator-name">
             Allocator Name
           </label>
           <input
             id="allocator-name"
             type="text"
-            className="form-input"
+            className="input"
             placeholder="e.g., Conservative Mix"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
         </div>
 
-        <div className="form-group">
-          <label className="form-label">Allocations</label>
-          <div className="allocation-rows">
-            {rows.map((row, index) => (
-              <div key={row.id} className="allocation-row">
+        {/* Allocations */}
+        <div>
+          <label className="block text-sm font-medium text-text-secondary mb-2">
+            Allocations
+          </label>
+          <div className="flex flex-col gap-2">
+            {rows.map((row) => (
+              <div key={row.id} className="flex items-center gap-3">
                 <input
                   type="text"
-                  className="form-input ticker-input"
+                  className="input flex-1 uppercase"
                   placeholder="TICKER"
                   value={row.ticker}
                   onChange={(e) => handleTickerChange(row.id, e.target.value)}
                 />
-                <div className="allocation-input-wrapper">
+                <div className="relative flex-1">
                   <input
                     type="number"
-                    className="form-input allocation-input"
+                    className="input pr-8"
                     placeholder="0"
                     min="0"
                     max="100"
@@ -128,49 +132,62 @@ export const ManualAllocatorModal: React.FC<ManualAllocatorModalProps> = ({
                     value={row.allocation || ''}
                     onChange={(e) => handleAllocationChange(row.id, e.target.value)}
                   />
-                  <span className="allocation-unit">%</span>
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted text-sm pointer-events-none">
+                    %
+                  </span>
                 </div>
                 <button
                   type="button"
-                  className="btn-icon btn-remove"
                   onClick={() => handleRemoveRow(row.id)}
                   disabled={rows.length === 1}
+                  className="p-2 rounded-lg text-text-muted hover:text-danger hover:bg-danger-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                   aria-label="Remove instrument"
                 >
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12 4L4 12M4 4L12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  </svg>
+                  <X className="w-4 h-4" />
                 </button>
               </div>
             ))}
           </div>
-          <button type="button" className="btn btn-secondary btn-add" onClick={handleAddRow}>
-            + Add Instrument
+
+          <button
+            type="button"
+            onClick={handleAddRow}
+            className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border border-dashed border-border hover:border-accent text-text-secondary hover:text-accent transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Add Instrument
           </button>
         </div>
 
-        <div className="allocation-sum">
-          <span className="sum-label">Total Allocation:</span>
-          <span className={`sum-value ${isValidSum ? 'sum-valid' : 'sum-invalid'}`}>
+        {/* Sum Display */}
+        <div className="flex items-center justify-between p-4 rounded-lg bg-surface-tertiary">
+          <span className="text-sm font-medium text-text-secondary">Total Allocation:</span>
+          <span className={`text-lg font-semibold ${isValidSum ? 'text-success' : 'text-danger'}`}>
             {sum.toFixed(2)}%
           </span>
         </div>
 
+        {/* Warning */}
         {!isValidSum && (
-          <div className="allocation-warning">
+          <div className="p-3 rounded-lg bg-warning-muted border border-warning/30 text-warning text-sm">
             Warning: Total allocation is not 100%. The allocator will still be saved.
           </div>
         )}
 
-        <div className="modal-footer">
-          <button type="button" className="btn btn-secondary" onClick={onClose}>
+        {/* Footer */}
+        <div className="flex justify-end gap-3 pt-4 border-t border-border">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2.5 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-tertiary transition-colors"
+          >
             Cancel
           </button>
           <button
             type="button"
-            className="btn btn-primary"
             onClick={handleSave}
             disabled={!name.trim() || rows.every(row => !row.ticker.trim())}
+            className="px-5 py-2.5 rounded-lg font-medium bg-accent text-white hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Save
           </button>

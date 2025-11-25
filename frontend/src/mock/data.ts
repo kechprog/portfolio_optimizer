@@ -1,4 +1,4 @@
-import { Allocator, AllocatorResult, DateRange } from '../types';
+import { Allocator, AllocatorResult, DateRange, ManualAllocator, MaxSharpeAllocator, MinVolatilityAllocator } from '../types';
 
 // Generate dates for performance data
 function generateDates(startDate: string, endDate: string): string[] {
@@ -26,43 +26,47 @@ function generateReturns(dates: string[], volatility: number, trend: number): nu
   return returns;
 }
 
-// Mock allocators
+// Mock allocators with proper types
+const manualAllocator: ManualAllocator = {
+  id: 'alloc-1',
+  type: 'manual',
+  config: {
+    name: 'Conservative Mix',
+    allocations: { 'AAPL': 0.3, 'MSFT': 0.3, 'GOOG': 0.2, 'BND': 0.2 },
+  },
+  enabled: true,
+};
+
+const maxSharpeAllocator: MaxSharpeAllocator = {
+  id: 'alloc-2',
+  type: 'max_sharpe',
+  config: {
+    name: 'Max Sharpe Portfolio',
+    instruments: ['AAPL', 'MSFT', 'GOOG', 'AMZN', 'NVDA'],
+    allow_shorting: false,
+    use_adj_close: true,
+  },
+  enabled: true,
+};
+
+const minVolatilityAllocator: MinVolatilityAllocator = {
+  id: 'alloc-3',
+  type: 'min_volatility',
+  config: {
+    name: 'Low Volatility',
+    instruments: ['AAPL', 'MSFT', 'JNJ', 'PG', 'KO'],
+    allow_shorting: false,
+    use_adj_close: true,
+    update_interval: { value: 1, unit: 'months' },
+    target_return: null,
+  },
+  enabled: false,
+};
+
 export const mockAllocators: Allocator[] = [
-  {
-    id: 'alloc-1',
-    type: 'manual',
-    config: {
-      name: 'Conservative Mix',
-      allocations: { 'AAPL': 0.3, 'MSFT': 0.3, 'GOOG': 0.2, 'BND': 0.2 },
-    },
-    enabled: true,
-  },
-  {
-    id: 'alloc-2',
-    type: 'max_sharpe',
-    config: {
-      name: 'Max Sharpe Portfolio',
-      instruments: ['AAPL', 'MSFT', 'GOOG', 'AMZN', 'NVDA'],
-      allow_shorting: false,
-      use_adj_close: true,
-      update_enabled: false,
-    },
-    enabled: true,
-  },
-  {
-    id: 'alloc-3',
-    type: 'min_volatility',
-    config: {
-      name: 'Low Volatility',
-      instruments: ['AAPL', 'MSFT', 'JNJ', 'PG', 'KO'],
-      allow_shorting: false,
-      use_adj_close: true,
-      update_enabled: true,
-      update_interval_value: 1,
-      update_interval_unit: 'months',
-    },
-    enabled: false,
-  },
+  manualAllocator,
+  maxSharpeAllocator,
+  minVolatilityAllocator,
 ];
 
 // Default date range
@@ -94,9 +98,54 @@ export const mockResults: Record<string, AllocatorResult> = {
     allocator_id: 'alloc-2',
     segments: [
       {
-        start_date: '2023-01-01',
-        end_date: '2024-06-01',
+        start_date: '2024-01-01',
+        end_date: '2024-01-15',
         weights: { 'AAPL': 0.35, 'MSFT': 0.28, 'GOOG': 0.15, 'AMZN': 0.12, 'NVDA': 0.10 },
+      },
+      {
+        start_date: '2024-01-15',
+        end_date: '2024-02-01',
+        weights: { 'AAPL': 0.30, 'MSFT': 0.32, 'GOOG': 0.18, 'AMZN': 0.10, 'NVDA': 0.10 },
+      },
+      {
+        start_date: '2024-02-01',
+        end_date: '2024-02-15',
+        weights: { 'AAPL': 0.28, 'MSFT': 0.30, 'GOOG': 0.20, 'AMZN': 0.12, 'NVDA': 0.10 },
+      },
+      {
+        start_date: '2024-02-15',
+        end_date: '2024-03-01',
+        weights: { 'AAPL': 0.32, 'MSFT': 0.25, 'GOOG': 0.18, 'AMZN': 0.15, 'NVDA': 0.10 },
+      },
+      {
+        start_date: '2024-03-01',
+        end_date: '2024-03-15',
+        weights: { 'AAPL': 0.25, 'MSFT': 0.30, 'GOOG': 0.22, 'AMZN': 0.13, 'NVDA': 0.10 },
+      },
+      {
+        start_date: '2024-03-15',
+        end_date: '2024-04-01',
+        weights: { 'AAPL': 0.28, 'MSFT': 0.28, 'GOOG': 0.20, 'AMZN': 0.14, 'NVDA': 0.10 },
+      },
+      {
+        start_date: '2024-04-01',
+        end_date: '2024-04-15',
+        weights: { 'AAPL': 0.30, 'MSFT': 0.26, 'GOOG': 0.19, 'AMZN': 0.15, 'NVDA': 0.10 },
+      },
+      {
+        start_date: '2024-04-15',
+        end_date: '2024-05-01',
+        weights: { 'AAPL': 0.33, 'MSFT': 0.25, 'GOOG': 0.17, 'AMZN': 0.12, 'NVDA': 0.13 },
+      },
+      {
+        start_date: '2024-05-01',
+        end_date: '2024-05-15',
+        weights: { 'AAPL': 0.29, 'MSFT': 0.27, 'GOOG': 0.21, 'AMZN': 0.11, 'NVDA': 0.12 },
+      },
+      {
+        start_date: '2024-05-15',
+        end_date: '2024-06-01',
+        weights: { 'AAPL': 0.31, 'MSFT': 0.26, 'GOOG': 0.18, 'AMZN': 0.13, 'NVDA': 0.12 },
       },
     ],
     performance: {

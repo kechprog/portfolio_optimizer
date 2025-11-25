@@ -1,13 +1,16 @@
-import { useState, useCallback } from 'react';
-import { MainLayout, Panel } from './components/layout';
+import { useState, useCallback, useEffect } from 'react';
+import { MainLayout, Panel, Header } from './components/layout';
 import { PerformanceChart } from './components/charts';
-import { AllocatorList, ControlPanel, PortfolioInfo } from './components/allocators';
+import { AllocatorGrid, PortfolioInfo } from './components/allocators';
 import { ManualAllocatorModal, MPTAllocatorModal, ConfirmModal } from './components/modals';
-import { Allocator, AllocatorType, AllocatorResult, DateRange, ManualAllocatorConfig, MPTAllocatorConfig } from './types';
+import { useTheme } from './hooks';
+import { Allocator, AllocatorType, AllocatorResult, DateRange, ManualAllocatorConfig, MaxSharpeAllocatorConfig, MinVolatilityAllocatorConfig } from './types';
 import { mockAllocators, mockResults, defaultDateRange, getAllocatorName } from './mock/data';
-import './App.css';
 
 function App() {
+  // Theme
+  useTheme();
+
   // Core state
   const [allocators, setAllocators] = useState<Allocator[]>(mockAllocators);
   const [results, setResults] = useState<Record<string, AllocatorResult>>(mockResults);
@@ -48,20 +51,39 @@ function App() {
 
   const handleDuplicateAllocator = useCallback((id: string) => {
     const allocator = allocators.find(a => a.id === id);
-    if (allocator) {
-      const newId = generateId();
-      const newConfig = {
-        ...allocator.config,
-        name: `${getAllocatorName(allocator)} (copy)`,
-      };
-      const newAllocator: Allocator = {
-        id: newId,
-        type: allocator.type,
-        config: newConfig,
-        enabled: false,
-      };
-      setAllocators(prev => [...prev, newAllocator]);
+    if (!allocator) return;
+
+    const newId = generateId();
+    const newName = `${getAllocatorName(allocator)} (copy)`;
+
+    let newAllocator: Allocator;
+    switch (allocator.type) {
+      case 'manual':
+        newAllocator = {
+          id: newId,
+          type: 'manual',
+          config: { ...allocator.config, name: newName },
+          enabled: false,
+        };
+        break;
+      case 'max_sharpe':
+        newAllocator = {
+          id: newId,
+          type: 'max_sharpe',
+          config: { ...allocator.config, name: newName },
+          enabled: false,
+        };
+        break;
+      case 'min_volatility':
+        newAllocator = {
+          id: newId,
+          type: 'min_volatility',
+          config: { ...allocator.config, name: newName },
+          enabled: false,
+        };
+        break;
     }
+    setAllocators(prev => [...prev, newAllocator]);
   }, [allocators]);
 
   const handleDeleteAllocator = useCallback((id: string) => {
@@ -92,16 +114,18 @@ function App() {
 
   // Save allocator (create or update)
   const handleSaveManualAllocator = useCallback((config: ManualAllocatorConfig) => {
-    if (editingAllocator) {
-      // Update existing
+    if (editingAllocator && editingAllocator.type === 'manual') {
+      const updatedAllocator: Allocator = {
+        id: editingAllocator.id,
+        type: 'manual',
+        config,
+        enabled: editingAllocator.enabled,
+      };
       setAllocators(prev => prev.map(a =>
-        a.id === editingAllocator.id
-          ? { ...a, config }
-          : a
+        a.id === editingAllocator.id ? updatedAllocator : a
       ));
       setEditingAllocator(null);
     } else if (creatingAllocatorType === 'manual') {
-      // Create new
       const newAllocator: Allocator = {
         id: generateId(),
         type: 'manual',
@@ -113,22 +137,44 @@ function App() {
     }
   }, [editingAllocator, creatingAllocatorType]);
 
-  const handleSaveMPTAllocator = useCallback((config: MPTAllocatorConfig) => {
-    const type = editingAllocator?.type || creatingAllocatorType;
+  const handleSaveMPTAllocator = useCallback((config: MaxSharpeAllocatorConfig | MinVolatilityAllocatorConfig) => {
     if (editingAllocator) {
-      // Update existing
+      let updatedAllocator: Allocator;
+      if (editingAllocator.type === 'max_sharpe') {
+        updatedAllocator = {
+          id: editingAllocator.id,
+          type: 'max_sharpe',
+          config: config as MaxSharpeAllocatorConfig,
+          enabled: editingAllocator.enabled,
+        };
+      } else if (editingAllocator.type === 'min_volatility') {
+        updatedAllocator = {
+          id: editingAllocator.id,
+          type: 'min_volatility',
+          config: config as MinVolatilityAllocatorConfig,
+          enabled: editingAllocator.enabled,
+        };
+      } else {
+        return;
+      }
       setAllocators(prev => prev.map(a =>
-        a.id === editingAllocator.id
-          ? { ...a, config }
-          : a
+        a.id === editingAllocator.id ? updatedAllocator : a
       ));
       setEditingAllocator(null);
-    } else if (type === 'max_sharpe' || type === 'min_volatility') {
-      // Create new
+    } else if (creatingAllocatorType === 'max_sharpe') {
       const newAllocator: Allocator = {
         id: generateId(),
-        type: type,
-        config,
+        type: 'max_sharpe',
+        config: config as MaxSharpeAllocatorConfig,
+        enabled: false,
+      };
+      setAllocators(prev => [...prev, newAllocator]);
+      setCreatingAllocatorType(null);
+    } else if (creatingAllocatorType === 'min_volatility') {
+      const newAllocator: Allocator = {
+        id: generateId(),
+        type: 'min_volatility',
+        config: config as MinVolatilityAllocatorConfig,
         enabled: false,
       };
       setAllocators(prev => [...prev, newAllocator]);
@@ -150,7 +196,6 @@ function App() {
         total_steps: enabledAllocators.length,
       });
 
-      // Simulate computation delay
       await new Promise(resolve => setTimeout(resolve, 500));
     }
 
@@ -184,44 +229,48 @@ function App() {
     ? editingAllocator.type
     : (creatingAllocatorType as 'max_sharpe' | 'min_volatility');
 
+  // Auto-select first enabled allocator
+  useEffect(() => {
+    const enabledAllocators = allocators.filter(a => a.enabled);
+    if (enabledAllocators.length > 0 && !enabledAllocators.find(a => a.id === selectedAllocatorId)) {
+      setSelectedAllocatorId(enabledAllocators[0].id);
+    }
+  }, [allocators, selectedAllocatorId]);
+
   return (
-    <div className="app">
+    <>
       <MainLayout
-        performanceChart={
-          <Panel title="Portfolio Performance (Out-of-Sample)">
+        header={
+          <Header
+            dateRange={dateRange}
+            onDateRangeChange={setDateRange}
+            includeDividends={includeDividends}
+            onIncludeDividendsChange={setIncludeDividends}
+            onCompute={handleCompute}
+            isComputing={isComputing}
+            progress={computingProgress}
+          />
+        }
+        chart={
+          <Panel showFullscreen>
             <PerformanceChart
               results={results}
               allocators={allocators}
             />
           </Panel>
         }
-        allocatorList={
-          <Panel title="Allocators">
-            <AllocatorList
-              allocators={allocators}
-              onToggle={handleToggleAllocator}
-              onConfigure={handleConfigureAllocator}
-              onDuplicate={handleDuplicateAllocator}
-              onDelete={handleDeleteAllocator}
-              onCreate={handleCreateAllocator}
-            />
-          </Panel>
+        allocators={
+          <AllocatorGrid
+            allocators={allocators}
+            onToggle={handleToggleAllocator}
+            onConfigure={handleConfigureAllocator}
+            onDuplicate={handleDuplicateAllocator}
+            onDelete={handleDeleteAllocator}
+            onCreate={handleCreateAllocator}
+          />
         }
-        controlPanel={
-          <Panel title="Controls">
-            <ControlPanel
-              dateRange={dateRange}
-              onDateRangeChange={setDateRange}
-              includeDividends={includeDividends}
-              onIncludeDividendsChange={setIncludeDividends}
-              onCompute={handleCompute}
-              isComputing={isComputing}
-              progress={computingProgress}
-            />
-          </Panel>
-        }
-        portfolioInfo={
-          <Panel title="Portfolio Details">
+        portfolio={
+          <Panel showFullscreen>
             <PortfolioInfo
               allocators={allocators}
               results={results}
@@ -240,7 +289,7 @@ function App() {
         onSave={handleSaveManualAllocator}
       />
 
-      {/* MPT Allocator Modal (Max Sharpe / Min Volatility) */}
+      {/* MPT Allocator Modal */}
       <MPTAllocatorModal
         isOpen={showMPTModal}
         onClose={closeMPTModal}
@@ -259,7 +308,7 @@ function App() {
         variant="danger"
         confirmText="Delete"
       />
-    </div>
+    </>
   );
 }
 
