@@ -1,0 +1,11 @@
+.confirm-modal-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.confirm-message {
+  margin: 0 0 1.5rem 0;
+  color: #cccccc;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
