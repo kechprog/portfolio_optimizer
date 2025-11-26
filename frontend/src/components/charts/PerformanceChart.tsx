@@ -193,7 +193,8 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ results, allocators
       clearTimeout(timer);
       window.removeEventListener('resize', updateChartDimensions);
     };
-  }, [zoomedData.length, getChartAreaDimensions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoomedData.length]);
 
   // Helper to get data index from mouse X position
   const getDataIndexFromX = useCallback((clientX: number): number => {
@@ -208,7 +209,8 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ results, allocators
     const relativeX = clientX - containerRect.left - dims.left;
     const ratio = Math.max(0, Math.min(1, relativeX / dims.width));
     return Math.round(ratio * (zoomedData.length - 1));
-  }, [zoomedData.length, getChartAreaDimensions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoomedData.length]);
 
   // Handle mouse down for both selection (left) and pan (right)
   const handleMouseDown = useCallback((e: React.MouseEvent) => {

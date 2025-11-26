@@ -1,6 +1,7 @@
 """
 Database module for async SQLite operations with price caching.
 """
+import asyncio
 import json
 import aiosqlite
 from datetime import date, datetime
@@ -10,28 +11,31 @@ from config import DATABASE_PATH
 
 # Track if database has been initialized
 _db_initialized = False
+_db_init_lock = asyncio.Lock()
 
 
 async def init_database() -> None:
     """Initialize the database schema."""
     global _db_initialized
-    if _db_initialized:
-        return
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS price_cache (
-                ticker TEXT PRIMARY KEY,
-                data JSON NOT NULL,
-                first_date DATE NOT NULL,
-                last_date DATE NOT NULL,
-                fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await db.commit()
-        print(f"Database initialized at {DATABASE_PATH}")
+    async with _db_init_lock:
+        if _db_initialized:
+            return
 
-    _db_initialized = True
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS price_cache (
+                    ticker TEXT PRIMARY KEY,
+                    data JSON NOT NULL,
+                    first_date DATE NOT NULL,
+                    last_date DATE NOT NULL,
+                    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            await db.commit()
+            print(f"Database initialized at {DATABASE_PATH}")
+
+        _db_initialized = True
 
 
 async def get_cached_price_data(ticker: str) -> Optional[Dict[str, Any]]:
@@ -56,12 +60,16 @@ async def get_cached_price_data(ticker: str) -> Optional[Dict[str, Any]]:
             if row is None:
                 return None
 
-            return {
-                'data': json.loads(row['data']),
-                'first_date': datetime.strptime(row['first_date'], '%Y-%m-%d').date(),
-                'last_date': datetime.strptime(row['last_date'], '%Y-%m-%d').date(),
-                'fetched_at': datetime.fromisoformat(row['fetched_at'])
-            }
+            try:
+                return {
+                    'data': json.loads(row['data']),
+                    'first_date': datetime.strptime(row['first_date'], '%Y-%m-%d').date(),
+                    'last_date': datetime.strptime(row['last_date'], '%Y-%m-%d').date(),
+                    'fetched_at': datetime.fromisoformat(row['fetched_at'])
+                }
+            except (json.JSONDecodeError, ValueError) as e:
+                print(f"Warning: Failed to parse cached data for {ticker}: {e}")
+                return None
 
 
 async def store_price_data(

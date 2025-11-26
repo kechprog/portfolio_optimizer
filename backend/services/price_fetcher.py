@@ -124,18 +124,22 @@ def parse_time_series_to_dataframe(time_series: Dict[str, Any]) -> pd.DataFrame:
     df_data = []
 
     for date_str, daily_data in time_series.items():
-        row = {
-            'date': pd.to_datetime(date_str),
-            'Open': float(daily_data['1. open']),
-            'High': float(daily_data['2. high']),
-            'Low': float(daily_data['3. low']),
-            'Close': float(daily_data['4. close']),
-            'AdjClose': float(daily_data['5. adjusted close']),
-            'Volume': int(daily_data['6. volume']),
-            'DividendAmount': float(daily_data['7. dividend amount']),
-            'SplitCoef': float(daily_data['8. split coefficient'])
-        }
-        df_data.append(row)
+        try:
+            row = {
+                'date': pd.to_datetime(date_str),
+                'Open': float(daily_data['1. open']),
+                'High': float(daily_data['2. high']),
+                'Low': float(daily_data['3. low']),
+                'Close': float(daily_data['4. close']),
+                'AdjClose': float(daily_data['5. adjusted close']),
+                'Volume': int(daily_data['6. volume']),
+                'DividendAmount': float(daily_data['7. dividend amount']),
+                'SplitCoef': float(daily_data['8. split coefficient'])
+            }
+            df_data.append(row)
+        except (ValueError, KeyError, TypeError) as e:
+            logger.warning(f"Failed to parse data for date {date_str}: {e}. Skipping row.")
+            continue
 
     df = pd.DataFrame(df_data)
     df.set_index('date', inplace=True)

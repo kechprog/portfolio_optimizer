@@ -32,6 +32,9 @@ export class WebSocketService {
    * Establish WebSocket connection
    */
   public connect(): void {
+    // Reset isReconnecting flag at the start to allow manual connect() calls
+    this.isReconnecting = false;
+
     if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
       return;
     }

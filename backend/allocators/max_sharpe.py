@@ -146,9 +146,14 @@ class MaxSharpeAllocator(OptimizationAllocatorBase):
         Returns:
             MaxSharpeAllocator instance.
         """
+        # Validate instruments type
+        instruments = config.get("instruments", [])
+        if not isinstance(instruments, list) or not all(isinstance(i, str) for i in instruments):
+            raise ValueError("instruments must be a list of strings")
+
         return cls(
             name=config.get("name", "MaxSharpe Allocator"),
-            instruments=config.get("instruments", []),
+            instruments=instruments,
             allow_shorting=config.get("allow_shorting", False),
             use_adj_close=config.get("use_adj_close", True),
             update_enabled=config.get("update_enabled", False),

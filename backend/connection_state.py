@@ -132,7 +132,7 @@ class ConnectionState:
             ]
             return copy.deepcopy(allocators)
 
-    def get_matrix_cache(self, cache_key: str) -> Any | None:
+    async def get_matrix_cache(self, cache_key: str) -> Any | None:
         """
         Get cached matrix data.
 
@@ -142,9 +142,10 @@ class ConnectionState:
         Returns:
             The cached data if found, None otherwise.
         """
-        return self.matrix_cache.get(cache_key)
+        async with self._lock:
+            return self.matrix_cache.get(cache_key)
 
-    def set_matrix_cache(self, cache_key: str, data: Any) -> None:
+    async def set_matrix_cache(self, cache_key: str, data: Any) -> None:
         """
         Store data in the matrix cache.
 
@@ -152,13 +153,15 @@ class ConnectionState:
             cache_key: Key to store the data under.
             data: The data to cache.
         """
-        self.matrix_cache[cache_key] = data
-        logger.debug(f"Cached matrix data under key {cache_key}")
+        async with self._lock:
+            self.matrix_cache[cache_key] = data
+            logger.debug(f"Cached matrix data under key {cache_key}")
 
-    def clear_matrix_cache(self) -> None:
+    async def clear_matrix_cache(self) -> None:
         """Clear all cached matrix data."""
-        self.matrix_cache.clear()
-        logger.debug("Cleared matrix cache")
+        async with self._lock:
+            self.matrix_cache.clear()
+            logger.debug("Cleared matrix cache")
 
     async def clear(self) -> None:
         """Clear all state (allocators and cache)."""

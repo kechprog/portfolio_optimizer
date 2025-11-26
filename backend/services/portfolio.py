@@ -86,6 +86,7 @@ async def compute_performance(
             price_series_list.append(series)
         elif "Close" in df.columns:
             # Fallback to Close if AdjClose not available
+            logger.warning(f"AdjClose not available for {ticker}, using Close instead. Dividends will not be reflected.")
             series = df["Close"].rename(ticker)
             price_series_list.append(series)
 

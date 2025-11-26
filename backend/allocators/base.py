@@ -6,8 +6,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Set
+import logging
 
 import pandas as pd
+
+# Initialize logger at module level
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -71,10 +75,14 @@ class Portfolio:
 
         Returns:
             The active PortfolioSegment or None if no segment covers this date.
+
+        Note:
+            The segment end_date is exclusive (as per PortfolioSegment docstring).
+            query_date must be >= start_date and < end_date.
         """
         for segment in self.segments:
-            # Use <= for end_date to match original app behavior (inclusive end)
-            if segment.start_date <= query_date <= segment.end_date:
+            # end_date is exclusive, so use < for comparison
+            if segment.start_date <= query_date < segment.end_date:
                 return segment
         return None
 
@@ -319,9 +327,6 @@ class OptimizationAllocatorBase(Allocator):
         Returns:
             DataFrame with tickers as columns and dates as index, or None if fetch failed.
         """
-        import logging
-        logger = logging.getLogger(__name__)
-
         price_column = "AdjClose" if self._use_adj_close else "Close"
         prices_list: List[pd.Series] = []
 
@@ -350,12 +355,21 @@ class OptimizationAllocatorBase(Allocator):
 
         # Combine all price series into a single DataFrame
         prices = pd.concat(prices_list, axis=1)
-        # Forward fill then backward fill to handle missing data
-        prices = prices.ffill().bfill()
+
+        # Forward fill to handle missing data (no backward fill to avoid look-ahead bias)
+        prices = prices.ffill()
+
+        # Drop rows with NaN values at the start
+        initial_rows = len(prices)
+        prices = prices.dropna()
+        dropped_rows = initial_rows - len(prices)
+
+        if dropped_rows > 0:
+            logger.info(f"Dropped {dropped_rows} rows with NaN values from price data")
 
         # Check if DataFrame is all NaN or empty after filling
-        if prices.isna().all().all():
-            logger.warning("Price DataFrame is all NaN after forward/backward fill")
+        if prices.empty or prices.isna().all().all():
+            logger.warning("Price DataFrame is empty or all NaN after forward fill")
             return None
 
         return prices
@@ -428,9 +442,6 @@ class OptimizationAllocatorBase(Allocator):
         Returns:
             Portfolio with computed allocations.
         """
-        import logging
-        logger = logging.getLogger(__name__)
-
         portfolio = Portfolio()
         instruments = self.get_instruments()
         optimization_name = self._get_optimization_name()
@@ -457,6 +468,12 @@ class OptimizationAllocatorBase(Allocator):
                     return portfolio
 
                 allocations = self._optimize(prices, instruments)
+
+                # Validate allocations before appending segment
+                if not allocations:
+                    logger.warning(f"({self._name}) Empty allocations returned from optimization, skipping segment")
+                    return portfolio
+
                 portfolio.append_segment(
                     start_date=fit_end_date,
                     end_date=test_end_date,
@@ -490,6 +507,16 @@ class OptimizationAllocatorBase(Allocator):
 
                 allocations = self._optimize(prices, instruments)
 
+                # Validate allocations before appending segment
+                if not allocations:
+                    logger.warning(f"({self._name}) Empty allocations returned from optimization at {current_date}, skipping segment")
+                    # Calculate next date to continue the loop
+                    if isinstance(delta, timedelta):
+                        current_date = current_date + delta
+                    else:
+                        current_date = (pd.Timestamp(current_date) + delta).date()
+                    continue
+
             except Exception as e:
                 logger.error(
                     f"({self._name}) Dynamic allocation failed at {current_date}: {e}",
@@ -504,6 +531,11 @@ class OptimizationAllocatorBase(Allocator):
                 segment_end_date = (pd.Timestamp(current_date) + delta).date()
 
             segment_end_date = min(segment_end_date, test_end_date)
+
+            # Ensure segment_end_date is strictly greater than current_date to prevent infinite loop
+            if segment_end_date <= current_date:
+                segment_end_date = current_date + timedelta(days=1)
+                logger.warning(f"({self._name}) Adjusted segment_end_date to {segment_end_date} to prevent infinite loop")
 
             portfolio.append_segment(
                 start_date=current_date,

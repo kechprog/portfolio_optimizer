@@ -172,14 +172,24 @@ class MinVolatilityAllocator(OptimizationAllocatorBase):
         Returns:
             MinVolatilityAllocator instance.
         """
+        # Validate instruments type
+        instruments = config.get("instruments", [])
+        if not isinstance(instruments, list) or not all(isinstance(i, str) for i in instruments):
+            raise ValueError("instruments must be a list of strings")
+
+        # Validate target_return_value type if present
+        target_return_value = config.get("target_return_value", 10.0)
+        if not isinstance(target_return_value, (int, float)):
+            raise ValueError("target_return_value must be a number")
+
         return cls(
             name=config.get("name", "MinVolatility Allocator"),
-            instruments=config.get("instruments", []),
+            instruments=instruments,
             allow_shorting=config.get("allow_shorting", False),
             use_adj_close=config.get("use_adj_close", True),
             update_enabled=config.get("update_enabled", False),
             update_interval_value=config.get("update_interval_value", 1),
             update_interval_unit=config.get("update_interval_unit", "days"),
             target_return_enabled=config.get("target_return_enabled", False),
-            target_return_value=config.get("target_return_value", 10.0)
+            target_return_value=target_return_value
         )

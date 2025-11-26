@@ -50,6 +50,12 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
         }
       },
       onMessage: (message: ServerMessage) => {
+        // Validate message structure before accessing properties
+        if (typeof message !== 'object' || message === null || typeof message.type !== 'string') {
+          console.error('Invalid message received:', message);
+          return;
+        }
+
         // Handle error messages
         if (message.type === 'error') {
           setError(message.message);

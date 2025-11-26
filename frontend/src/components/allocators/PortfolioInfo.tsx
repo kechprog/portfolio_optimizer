@@ -231,7 +231,7 @@ const PortfolioInfo: React.FC<PortfolioInfoProps> = ({
 
       return { start: newStart, end: newEnd };
     });
-  }, [zoomRange]);
+  }, []);
 
   // Helper to get chart plot area dimensions
   const getChartAreaDimensions = useCallback(() => {
@@ -292,7 +292,8 @@ const PortfolioInfo: React.FC<PortfolioInfoProps> = ({
     const relativeX = clientX - containerRect.left - dims.left;
     const ratio = Math.max(0, Math.min(1, relativeX / dims.width));
     return Math.round(ratio * (zoomedChartData.length - 1));
-  }, [zoomedChartData.length, getChartAreaDimensions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoomedChartData.length]);
 
   // Handle mouse down for both selection (left) and pan (right)
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
