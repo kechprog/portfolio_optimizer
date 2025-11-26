@@ -26,7 +26,15 @@ interface UseWebSocketReturn {
   setMessageHandler: (handler: (message: ServerMessage) => void) => void;
 }
 
-const DEFAULT_URL = 'ws://localhost:8000/ws';
+// Dynamically determine WebSocket URL based on current host
+// Uses wss:// for https, ws:// for http
+const getDefaultWsUrl = (): string => {
+  if (typeof window === 'undefined') return 'ws://localhost:8000/ws';
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/ws`;
+};
+
+const DEFAULT_URL = getDefaultWsUrl();
 
 export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketReturn {
   const { url = DEFAULT_URL, autoConnect = true } = options;
