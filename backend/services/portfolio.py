@@ -96,6 +96,11 @@ async def compute_performance(
     cumulative_returns: List[float] = []
     cumulative_factor = 1.0
 
+    # Add initial point at fit_end_date with 0% return (matches original app behavior)
+    # This provides the starting reference point for the performance curve
+    dates_list.append(fit_end_date.isoformat())
+    cumulative_returns.append(0.0)
+
     for idx, row in daily_returns.iterrows():
         # Get the date (handle both datetime and date index)
         if hasattr(idx, 'date'):
@@ -217,20 +222,29 @@ def calculate_metrics(
         if drawdown > max_drawdown:
             max_drawdown = drawdown
 
-    # Calculate volatility (standard deviation of returns)
+    # Calculate volatility (standard deviation of daily returns)
     if len(cumulative_returns) > 1:
-        # Convert cumulative to daily returns
+        # Convert cumulative percentage returns to daily returns using geometric calculation
+        # cumulative_returns are percentages, so 5% is stored as 5.0
+        # Convert to factors: 5% -> 1.05
         daily_returns = []
-        prev = 0.0
-        for ret in cumulative_returns:
-            daily_ret = ret - prev
+        for i in range(1, len(cumulative_returns)):
+            prev_factor = 1.0 + cumulative_returns[i - 1] / 100.0
+            curr_factor = 1.0 + cumulative_returns[i] / 100.0
+            # Daily return = (curr_factor / prev_factor) - 1, then convert to percentage
+            if prev_factor != 0:
+                daily_ret = ((curr_factor / prev_factor) - 1.0) * 100.0
+            else:
+                daily_ret = 0.0
             daily_returns.append(daily_ret)
-            prev = ret
 
         # Calculate standard deviation
-        mean = sum(daily_returns) / len(daily_returns)
-        variance = sum((r - mean) ** 2 for r in daily_returns) / len(daily_returns)
-        volatility = variance ** 0.5
+        if daily_returns:
+            mean = sum(daily_returns) / len(daily_returns)
+            variance = sum((r - mean) ** 2 for r in daily_returns) / len(daily_returns)
+            volatility = variance ** 0.5
+        else:
+            volatility = 0.0
     else:
         volatility = 0.0
 

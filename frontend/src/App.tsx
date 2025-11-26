@@ -1,24 +1,43 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { MainLayout, Panel, Header } from './components/layout';
 import { PerformanceChart } from './components/charts';
 import { AllocatorGrid, PortfolioInfo } from './components/allocators';
 import { ManualAllocatorModal, MPTAllocatorModal, ConfirmModal } from './components/modals';
-import { useTheme } from './hooks';
-import { Allocator, AllocatorType, AllocatorResult, DateRange, ManualAllocatorConfig, MaxSharpeAllocatorConfig, MinVolatilityAllocatorConfig } from './types';
-import { mockAllocators, mockResults, defaultDateRange, getAllocatorName } from './mock/data';
+import { useTheme, useWebSocket } from './hooks';
+import {
+  Allocator,
+  AllocatorType,
+  AllocatorResult,
+  DateRange,
+  ManualAllocatorConfig,
+  MaxSharpeAllocatorConfig,
+  MinVolatilityAllocatorConfig,
+  ServerMessage,
+  ConnectionStatus,
+} from './types';
+import { defaultDateRange, getAllocatorName } from './mock/data';
 
 function App() {
   // Theme
   useTheme();
 
-  // Core state
-  const [allocators, setAllocators] = useState<Allocator[]>(mockAllocators);
-  const [results, setResults] = useState<Record<string, AllocatorResult>>(mockResults);
+  // WebSocket connection
+  const {
+    status,
+    error: wsError,
+    createAllocator: wsCreateAllocator,
+    updateAllocator: wsUpdateAllocator,
+    deleteAllocator: wsDeleteAllocator,
+    compute: wsCompute,
+    setMessageHandler,
+  } = useWebSocket();
+
+  // Core state - start empty, no mock data
+  const [allocators, setAllocators] = useState<Allocator[]>([]);
+  const [results, setResults] = useState<Record<string, AllocatorResult>>({});
   const [dateRange, setDateRange] = useState<DateRange>(defaultDateRange);
   const [includeDividends, setIncludeDividends] = useState(true);
-  const [selectedAllocatorId, setSelectedAllocatorId] = useState<string | null>(
-    mockAllocators.length > 0 ? mockAllocators[0].id : null
-  );
+  const [selectedAllocatorId, setSelectedAllocatorId] = useState<string | null>(null);
   const [isComputing, setIsComputing] = useState(false);
   const [computingProgress, setComputingProgress] = useState<{
     allocator_id: string;
@@ -27,86 +46,206 @@ function App() {
     total_steps: number;
   } | null>(null);
 
+  // Track pending computes to know when all are done
+  const pendingComputesRef = useRef<Set<string>>(new Set());
+
+  // Track enabled state locally (server doesn't track this)
+  const [enabledIds, setEnabledIds] = useState<Set<string>>(new Set());
+
   // Modal state
   const [editingAllocator, setEditingAllocator] = useState<Allocator | null>(null);
   const [creatingAllocatorType, setCreatingAllocatorType] = useState<AllocatorType | null>(null);
   const [deletingAllocator, setDeletingAllocator] = useState<Allocator | null>(null);
 
-  // Generate unique ID
-  const generateId = () => `alloc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  // Helper to create typed allocator from server data
+  const createTypedAllocator = (
+    id: string,
+    allocatorType: string,
+    config: Record<string, unknown>
+  ): Allocator => {
+    switch (allocatorType) {
+      case 'manual':
+        return {
+          id,
+          type: 'manual',
+          config: config as unknown as ManualAllocatorConfig,
+          enabled: false,
+        };
+      case 'max_sharpe':
+        return {
+          id,
+          type: 'max_sharpe',
+          config: config as unknown as MaxSharpeAllocatorConfig,
+          enabled: false,
+        };
+      case 'min_volatility':
+        return {
+          id,
+          type: 'min_volatility',
+          config: config as unknown as MinVolatilityAllocatorConfig,
+          enabled: false,
+        };
+      default:
+        throw new Error(`Unknown allocator type: ${allocatorType}`);
+    }
+  };
+
+  // Set up WebSocket message handler
+  useEffect(() => {
+    setMessageHandler((message: ServerMessage) => {
+      switch (message.type) {
+        case 'allocator_created': {
+          // Add the new allocator to state with server-assigned ID
+          const newAllocator = createTypedAllocator(
+            message.id,
+            message.allocator_type,
+            message.config
+          );
+          setAllocators(prev => [...prev, newAllocator]);
+          break;
+        }
+
+        case 'allocator_updated': {
+          // Update allocator config in state
+          setAllocators(prev => prev.map(a => {
+            if (a.id !== message.id) return a;
+            // Preserve the type when updating config
+            switch (a.type) {
+              case 'manual':
+                return { ...a, config: message.config as unknown as ManualAllocatorConfig };
+              case 'max_sharpe':
+                return { ...a, config: message.config as unknown as MaxSharpeAllocatorConfig };
+              case 'min_volatility':
+                return { ...a, config: message.config as unknown as MinVolatilityAllocatorConfig };
+            }
+          }));
+          setEditingAllocator(null);
+          break;
+        }
+
+        case 'allocator_deleted': {
+          // Remove allocator from state
+          setAllocators(prev => prev.filter(a => a.id !== message.id));
+          setResults(prev => {
+            const newResults = { ...prev };
+            delete newResults[message.id];
+            return newResults;
+          });
+          setEnabledIds(prev => {
+            const next = new Set(prev);
+            next.delete(message.id);
+            return next;
+          });
+          break;
+        }
+
+        case 'progress': {
+          setComputingProgress({
+            allocator_id: message.allocator_id,
+            message: message.message,
+            step: message.step,
+            total_steps: message.total_steps,
+          });
+          break;
+        }
+
+        case 'result': {
+          // Store the result
+          const result: AllocatorResult = {
+            allocator_id: message.allocator_id,
+            segments: message.segments,
+            performance: message.performance,
+          };
+          setResults(prev => ({
+            ...prev,
+            [message.allocator_id]: result,
+          }));
+
+          // Track completion
+          pendingComputesRef.current.delete(message.allocator_id);
+          if (pendingComputesRef.current.size === 0) {
+            setIsComputing(false);
+            setComputingProgress(null);
+          }
+          break;
+        }
+
+        case 'error': {
+          console.error('Server error:', message.message);
+          // If error is for a compute, remove from pending
+          if (message.allocator_id) {
+            pendingComputesRef.current.delete(message.allocator_id);
+            if (pendingComputesRef.current.size === 0) {
+              setIsComputing(false);
+              setComputingProgress(null);
+            }
+          }
+          break;
+        }
+      }
+    });
+  }, [setMessageHandler]);
+
+  // Merge enabled state into allocators for display
+  const allocatorsWithEnabled = allocators.map(a => ({
+    ...a,
+    enabled: enabledIds.has(a.id),
+  }));
 
   // Allocator CRUD operations
   const handleToggleAllocator = useCallback((id: string) => {
-    setAllocators(prev => prev.map(a =>
-      a.id === id ? { ...a, enabled: !a.enabled } : a
-    ));
+    setEnabledIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
   }, []);
 
   const handleConfigureAllocator = useCallback((id: string) => {
     const allocator = allocators.find(a => a.id === id);
     if (allocator) {
-      setEditingAllocator(allocator);
+      setEditingAllocator({
+        ...allocator,
+        enabled: enabledIds.has(allocator.id),
+      });
     }
-  }, [allocators]);
+  }, [allocators, enabledIds]);
 
   const handleDuplicateAllocator = useCallback((id: string) => {
     const allocator = allocators.find(a => a.id === id);
     if (!allocator) return;
 
-    const newId = generateId();
-    const newName = `${getAllocatorName(allocator)} (copy)`;
+    const newName = `${getAllocatorName({ ...allocator, enabled: false })} (copy)`;
+    const newConfig = { ...allocator.config, name: newName };
 
-    let newAllocator: Allocator;
-    switch (allocator.type) {
-      case 'manual':
-        newAllocator = {
-          id: newId,
-          type: 'manual',
-          config: { ...allocator.config, name: newName },
-          enabled: false,
-        };
-        break;
-      case 'max_sharpe':
-        newAllocator = {
-          id: newId,
-          type: 'max_sharpe',
-          config: { ...allocator.config, name: newName },
-          enabled: false,
-        };
-        break;
-      case 'min_volatility':
-        newAllocator = {
-          id: newId,
-          type: 'min_volatility',
-          config: { ...allocator.config, name: newName },
-          enabled: false,
-        };
-        break;
-    }
-    setAllocators(prev => [...prev, newAllocator]);
-  }, [allocators]);
+    // Send to server - allocator_created message will add it to state
+    wsCreateAllocator(allocator.type, newConfig as Allocator['config']);
+  }, [allocators, wsCreateAllocator]);
 
   const handleDeleteAllocator = useCallback((id: string) => {
     const allocator = allocators.find(a => a.id === id);
     if (allocator) {
-      setDeletingAllocator(allocator);
+      setDeletingAllocator({
+        ...allocator,
+        enabled: enabledIds.has(allocator.id),
+      });
     }
-  }, [allocators]);
+  }, [allocators, enabledIds]);
 
   const confirmDeleteAllocator = useCallback(() => {
     if (deletingAllocator) {
-      setAllocators(prev => prev.filter(a => a.id !== deletingAllocator.id));
-      setResults(prev => {
-        const newResults = { ...prev };
-        delete newResults[deletingAllocator.id];
-        return newResults;
-      });
+      // Send to server - allocator_deleted message will remove from state
+      wsDeleteAllocator(deletingAllocator.id);
       if (selectedAllocatorId === deletingAllocator.id) {
         setSelectedAllocatorId(allocators.find(a => a.id !== deletingAllocator.id)?.id || null);
       }
       setDeletingAllocator(null);
     }
-  }, [deletingAllocator, selectedAllocatorId, allocators]);
+  }, [deletingAllocator, selectedAllocatorId, allocators, wsDeleteAllocator]);
 
   const handleCreateAllocator = useCallback((type: AllocatorType) => {
     setCreatingAllocatorType(type);
@@ -115,93 +254,53 @@ function App() {
   // Save allocator (create or update)
   const handleSaveManualAllocator = useCallback((config: ManualAllocatorConfig) => {
     if (editingAllocator && editingAllocator.type === 'manual') {
-      const updatedAllocator: Allocator = {
-        id: editingAllocator.id,
-        type: 'manual',
-        config,
-        enabled: editingAllocator.enabled,
-      };
-      setAllocators(prev => prev.map(a =>
-        a.id === editingAllocator.id ? updatedAllocator : a
-      ));
-      setEditingAllocator(null);
+      // Update existing - send to server
+      wsUpdateAllocator(editingAllocator.id, config);
     } else if (creatingAllocatorType === 'manual') {
-      const newAllocator: Allocator = {
-        id: generateId(),
-        type: 'manual',
-        config,
-        enabled: false,
-      };
-      setAllocators(prev => [...prev, newAllocator]);
+      // Create new - send to server
+      wsCreateAllocator('manual', config);
       setCreatingAllocatorType(null);
     }
-  }, [editingAllocator, creatingAllocatorType]);
+  }, [editingAllocator, creatingAllocatorType, wsUpdateAllocator, wsCreateAllocator]);
 
   const handleSaveMPTAllocator = useCallback((config: MaxSharpeAllocatorConfig | MinVolatilityAllocatorConfig) => {
     if (editingAllocator) {
-      let updatedAllocator: Allocator;
-      if (editingAllocator.type === 'max_sharpe') {
-        updatedAllocator = {
-          id: editingAllocator.id,
-          type: 'max_sharpe',
-          config: config as MaxSharpeAllocatorConfig,
-          enabled: editingAllocator.enabled,
-        };
-      } else if (editingAllocator.type === 'min_volatility') {
-        updatedAllocator = {
-          id: editingAllocator.id,
-          type: 'min_volatility',
-          config: config as MinVolatilityAllocatorConfig,
-          enabled: editingAllocator.enabled,
-        };
-      } else {
-        return;
-      }
-      setAllocators(prev => prev.map(a =>
-        a.id === editingAllocator.id ? updatedAllocator : a
-      ));
-      setEditingAllocator(null);
+      // Update existing - send to server
+      wsUpdateAllocator(editingAllocator.id, config);
     } else if (creatingAllocatorType === 'max_sharpe') {
-      const newAllocator: Allocator = {
-        id: generateId(),
-        type: 'max_sharpe',
-        config: config as MaxSharpeAllocatorConfig,
-        enabled: false,
-      };
-      setAllocators(prev => [...prev, newAllocator]);
+      wsCreateAllocator('max_sharpe', config);
       setCreatingAllocatorType(null);
     } else if (creatingAllocatorType === 'min_volatility') {
-      const newAllocator: Allocator = {
-        id: generateId(),
-        type: 'min_volatility',
-        config: config as MinVolatilityAllocatorConfig,
-        enabled: false,
-      };
-      setAllocators(prev => [...prev, newAllocator]);
+      wsCreateAllocator('min_volatility', config);
       setCreatingAllocatorType(null);
     }
-  }, [editingAllocator, creatingAllocatorType]);
+  }, [editingAllocator, creatingAllocatorType, wsUpdateAllocator, wsCreateAllocator]);
 
-  // Compute portfolios (mock for now)
+  // Compute portfolios via WebSocket
   const handleCompute = useCallback(async () => {
-    setIsComputing(true);
-    const enabledAllocators = allocators.filter(a => a.enabled);
-
-    for (let i = 0; i < enabledAllocators.length; i++) {
-      const allocator = enabledAllocators[i];
-      setComputingProgress({
-        allocator_id: allocator.id,
-        message: `Computing ${getAllocatorName(allocator)}...`,
-        step: i + 1,
-        total_steps: enabledAllocators.length,
-      });
-
-      await new Promise(resolve => setTimeout(resolve, 500));
+    const enabledAllocators = allocatorsWithEnabled.filter(a => a.enabled);
+    if (enabledAllocators.length === 0) return;
+    if (status !== 'connected') {
+      console.error('WebSocket not connected');
+      return;
     }
 
-    setComputingProgress(null);
-    setIsComputing(false);
-  }, [allocators]);
+    setIsComputing(true);
+    pendingComputesRef.current.clear();
+
+    // Clear previous results for enabled allocators
+    setResults(prev => {
+      const newResults = { ...prev };
+      enabledAllocators.forEach(a => delete newResults[a.id]);
+      return newResults;
+    });
+
+    // Send compute request for each enabled allocator
+    for (const allocator of enabledAllocators) {
+      pendingComputesRef.current.add(allocator.id);
+      wsCompute(allocator.id, dateRange, includeDividends);
+    }
+  }, [allocatorsWithEnabled, dateRange, includeDividends, status, wsCompute]);
 
   // Close modals
   const closeManualModal = () => {
@@ -231,14 +330,37 @@ function App() {
 
   // Auto-select first enabled allocator
   useEffect(() => {
-    const enabledAllocators = allocators.filter(a => a.enabled);
+    const enabledAllocators = allocatorsWithEnabled.filter(a => a.enabled);
     if (enabledAllocators.length > 0 && !enabledAllocators.find(a => a.id === selectedAllocatorId)) {
       setSelectedAllocatorId(enabledAllocators[0].id);
     }
-  }, [allocators, selectedAllocatorId]);
+  }, [allocatorsWithEnabled, selectedAllocatorId]);
+
+  // Connection status display
+  const getStatusBanner = () => {
+    if (status === 'connected') return null;
+
+    const statusConfig: Record<Exclude<ConnectionStatus, 'connected'>, { bg: string; text: string; message: string }> = {
+      connecting: { bg: 'bg-yellow-500', text: 'text-black', message: 'Connecting to server...' },
+      reconnecting: { bg: 'bg-yellow-500', text: 'text-black', message: 'Connection lost. Reconnecting...' },
+      disconnected: { bg: 'bg-gray-500', text: 'text-white', message: 'Disconnected from server' },
+      error: { bg: 'bg-red-500', text: 'text-white', message: 'Connection failed. Please check if the backend is running.' },
+    };
+
+    const config = statusConfig[status];
+    return (
+      <div className={`${config.bg} ${config.text} text-center py-2 px-4 text-sm font-medium`}>
+        {config.message}
+        {wsError && <span className="ml-2">({wsError})</span>}
+      </div>
+    );
+  };
 
   return (
     <>
+      {/* Connection Status Banner */}
+      {getStatusBanner()}
+
       <MainLayout
         header={
           <Header
@@ -247,7 +369,7 @@ function App() {
             includeDividends={includeDividends}
             onIncludeDividendsChange={setIncludeDividends}
             onCompute={handleCompute}
-            isComputing={isComputing}
+            isComputing={isComputing || status !== 'connected'}
             progress={computingProgress}
           />
         }
@@ -255,13 +377,13 @@ function App() {
           <Panel showFullscreen>
             <PerformanceChart
               results={results}
-              allocators={allocators}
+              allocators={allocatorsWithEnabled}
             />
           </Panel>
         }
         allocators={
           <AllocatorGrid
-            allocators={allocators}
+            allocators={allocatorsWithEnabled}
             onToggle={handleToggleAllocator}
             onConfigure={handleConfigureAllocator}
             onDuplicate={handleDuplicateAllocator}
@@ -272,7 +394,7 @@ function App() {
         portfolio={
           <Panel>
             <PortfolioInfo
-              allocators={allocators}
+              allocators={allocatorsWithEnabled}
               results={results}
               selectedAllocatorId={selectedAllocatorId}
               onSelectAllocator={setSelectedAllocatorId}

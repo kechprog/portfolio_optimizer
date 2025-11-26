@@ -1,0 +1,162 @@
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { WebSocketService } from '../services';
+import { ConnectionStatus, ServerMessage } from '../types/websocket';
+import { AllocatorType, AllocatorConfig, DateRange } from '../types';
+
+interface UseWebSocketOptions {
+  url?: string;
+  autoConnect?: boolean;
+}
+
+interface UseWebSocketReturn {
+  // State
+  status: ConnectionStatus;
+  error: string | null;
+
+  // Actions
+  connect: () => void;
+  disconnect: () => void;
+  createAllocator: (type: AllocatorType, config: AllocatorConfig) => void;
+  updateAllocator: (id: string, config: AllocatorConfig) => void;
+  deleteAllocator: (id: string) => void;
+  listAllocators: () => void;
+  compute: (allocatorId: string, dateRange: DateRange, includeDividends: boolean) => void;
+
+  // Event registration
+  setMessageHandler: (handler: (message: ServerMessage) => void) => void;
+}
+
+const DEFAULT_URL = 'ws://localhost:8000/ws';
+
+export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketReturn {
+  const { url = DEFAULT_URL, autoConnect = true } = options;
+
+  // State
+  const [status, setStatus] = useState<ConnectionStatus>('disconnected');
+  const [error, setError] = useState<string | null>(null);
+
+  // Refs
+  const wsServiceRef = useRef<WebSocketService | null>(null);
+  const messageHandlerRef = useRef<((message: ServerMessage) => void) | null>(null);
+
+  // Initialize WebSocketService
+  useEffect(() => {
+    wsServiceRef.current = new WebSocketService({
+      url,
+      onStatusChange: (newStatus) => {
+        setStatus(newStatus);
+        if (newStatus === 'connected') {
+          setError(null);
+        }
+      },
+      onMessage: (message: ServerMessage) => {
+        // Handle error messages
+        if (message.type === 'error') {
+          setError(message.message);
+        }
+
+        // Call the user-provided message handler
+        if (messageHandlerRef.current) {
+          messageHandlerRef.current(message);
+        }
+      },
+      onError: (errorEvent) => {
+        const errorMessage = errorEvent instanceof Error
+          ? errorEvent.message
+          : 'WebSocket connection error';
+        setError(errorMessage);
+      },
+    });
+
+    // Auto-connect if enabled
+    if (autoConnect) {
+      wsServiceRef.current.connect();
+    }
+
+    // Cleanup on unmount
+    return () => {
+      if (wsServiceRef.current) {
+        wsServiceRef.current.disconnect();
+        wsServiceRef.current = null;
+      }
+    };
+  }, [url, autoConnect]);
+
+  // Connection methods
+  const connect = useCallback(() => {
+    wsServiceRef.current?.connect();
+  }, []);
+
+  const disconnect = useCallback(() => {
+    wsServiceRef.current?.disconnect();
+  }, []);
+
+  // Message handler registration
+  const setMessageHandler = useCallback((handler: (message: ServerMessage) => void) => {
+    messageHandlerRef.current = handler;
+  }, []);
+
+  // Allocator management methods
+  const createAllocator = useCallback((type: AllocatorType, config: AllocatorConfig) => {
+    wsServiceRef.current?.send({
+      type: 'create_allocator',
+      allocator_type: type,
+      config,
+    });
+  }, []);
+
+  const updateAllocator = useCallback((id: string, config: AllocatorConfig) => {
+    wsServiceRef.current?.send({
+      type: 'update_allocator',
+      id,
+      config,
+    });
+  }, []);
+
+  const deleteAllocator = useCallback((id: string) => {
+    wsServiceRef.current?.send({
+      type: 'delete_allocator',
+      id,
+    });
+  }, []);
+
+  const listAllocators = useCallback(() => {
+    wsServiceRef.current?.send({
+      type: 'list_allocators',
+    });
+  }, []);
+
+  // Computation method
+  const compute = useCallback((
+    allocatorId: string,
+    dateRange: DateRange,
+    includeDividends: boolean
+  ) => {
+    wsServiceRef.current?.send({
+      type: 'compute',
+      allocator_id: allocatorId,
+      fit_start_date: dateRange.fit_start_date,
+      fit_end_date: dateRange.fit_end_date,
+      test_end_date: dateRange.test_end_date,
+      include_dividends: includeDividends,
+    });
+  }, []);
+
+  return {
+    // State
+    status,
+    error,
+
+    // Actions
+    connect,
+    disconnect,
+    createAllocator,
+    updateAllocator,
+    deleteAllocator,
+    listAllocators,
+    compute,
+
+    // Event registration
+    setMessageHandler,
+  };
+}

@@ -1,0 +1,121 @@
+// WebSocket message types for portfolio optimizer
+// These types match the backend schemas defined in backend/schemas.py
+
+// Connection status
+export type ConnectionStatus =
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'error';
+
+// ============================================================================
+// Client -> Server Messages
+// ============================================================================
+
+export interface CreateAllocatorMessage {
+  type: 'create_allocator';
+  allocator_type: string;
+  config: Record<string, unknown>;
+}
+
+export interface UpdateAllocatorMessage {
+  type: 'update_allocator';
+  id: string;
+  config: Record<string, unknown>;
+}
+
+export interface DeleteAllocatorMessage {
+  type: 'delete_allocator';
+  id: string;
+}
+
+export interface ListAllocatorsMessage {
+  type: 'list_allocators';
+}
+
+export interface ComputeMessage {
+  type: 'compute';
+  allocator_id: string;
+  fit_start_date: string;
+  fit_end_date: string;
+  test_end_date: string;
+  include_dividends: boolean;
+}
+
+// Union type for all client messages
+export type ClientMessage =
+  | CreateAllocatorMessage
+  | UpdateAllocatorMessage
+  | DeleteAllocatorMessage
+  | ListAllocatorsMessage
+  | ComputeMessage;
+
+// ============================================================================
+// Server -> Client Messages
+// ============================================================================
+
+export interface AllocatorCreatedMessage {
+  type: 'allocator_created';
+  id: string;
+  allocator_type: string;
+  config: Record<string, unknown>;
+}
+
+export interface AllocatorUpdatedMessage {
+  type: 'allocator_updated';
+  id: string;
+  config: Record<string, unknown>;
+}
+
+export interface AllocatorDeletedMessage {
+  type: 'allocator_deleted';
+  id: string;
+}
+
+export interface AllocatorsListMessage {
+  type: 'allocators_list';
+  allocators: Array<{
+    id: string;
+    type: string;  // Backend returns "type", not "allocator_type"
+    config: Record<string, unknown>;
+  }>;
+}
+
+export interface ProgressMessage {
+  type: 'progress';
+  allocator_id: string;
+  message: string;
+  step: number;
+  total_steps: number;
+}
+
+export interface ResultMessage {
+  type: 'result';
+  allocator_id: string;
+  segments: Array<{
+    start_date: string;
+    end_date: string;
+    weights: Record<string, number>;
+  }>;
+  performance: {
+    dates: string[];
+    cumulative_returns: number[];
+  };
+}
+
+export interface ErrorMessage {
+  type: 'error';
+  message: string;
+  allocator_id?: string;
+}
+
+// Union type for all server messages
+export type ServerMessage =
+  | AllocatorCreatedMessage
+  | AllocatorUpdatedMessage
+  | AllocatorDeletedMessage
+  | AllocatorsListMessage
+  | ProgressMessage
+  | ResultMessage
+  | ErrorMessage;

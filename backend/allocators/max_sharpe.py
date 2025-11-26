@@ -34,7 +34,7 @@ class MaxSharpeAllocator(Allocator):
         allow_shorting: bool = False,
         use_adj_close: bool = True,
         update_enabled: bool = False,
-        update_interval_value: int = 30,
+        update_interval_value: int = 1,
         update_interval_unit: str = "days"
     ):
         """
@@ -210,12 +210,12 @@ class MaxSharpeAllocator(Allocator):
         instruments = self.get_instruments()
 
         if not instruments:
-            logger.warning(f"({self._name}) No instruments configured")
-            return portfolio
+            raise ValueError(f"({self._name}) No instruments configured")
 
         if test_end_date <= fit_end_date:
-            logger.warning(f"({self._name}) test_end_date must be after fit_end_date")
-            return portfolio
+            raise ValueError(
+                f"test_end_date ({test_end_date}) must be after fit_end_date ({fit_end_date})"
+            )
 
         if progress_callback:
             await progress_callback(f"Optimizing MaxSharpe for {self._name}...", 0, 1)
@@ -337,6 +337,6 @@ class MaxSharpeAllocator(Allocator):
             allow_shorting=config.get("allow_shorting", False),
             use_adj_close=config.get("use_adj_close", True),
             update_enabled=config.get("update_enabled", False),
-            update_interval_value=config.get("update_interval_value", 30),
+            update_interval_value=config.get("update_interval_value", 1),
             update_interval_unit=config.get("update_interval_unit", "days")
         )

@@ -78,15 +78,18 @@ class ManualAllocator(Allocator):
         if progress_callback:
             await progress_callback("Computing manual allocations", 1, 2)
 
-        portfolio = Portfolio()
-
-        # Only create a segment if test_end_date is after fit_end_date
-        if test_end_date > fit_end_date:
-            portfolio.append_segment(
-                start_date=fit_end_date,
-                end_date=test_end_date,
-                allocations=self._allocations.copy()
+        # Validate date range
+        if test_end_date <= fit_end_date:
+            raise ValueError(
+                f"test_end_date ({test_end_date}) must be after fit_end_date ({fit_end_date})"
             )
+
+        portfolio = Portfolio()
+        portfolio.append_segment(
+            start_date=fit_end_date,
+            end_date=test_end_date,
+            allocations=self._allocations.copy()
+        )
 
         if progress_callback:
             await progress_callback("Manual allocations complete", 2, 2)

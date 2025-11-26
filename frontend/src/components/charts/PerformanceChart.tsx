@@ -149,6 +149,7 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ results, allocators
       const gridRect = cartesianGrid.getBoundingClientRect();
       return {
         left: gridRect.left - containerRect.left,
+        right: 30, // default right margin
         width: gridRect.width,
       };
     }
@@ -159,7 +160,7 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ results, allocators
       const x = parseFloat(clipRect.getAttribute('x') || '0');
       const clipWidth = parseFloat(clipRect.getAttribute('width') || '0');
       if (clipWidth > 0) {
-        return { left: x, width: clipWidth };
+        return { left: x, right: 30, width: clipWidth };
       }
     }
 
@@ -169,6 +170,7 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ results, allocators
     const containerWidth = container.clientWidth;
     return {
       left: 60, // margin.left (10) + YAxis (~50)
+      right: 30, // margin.right
       width: containerWidth - 60 - 30, // subtract left offset and right margin
     };
   }, []);

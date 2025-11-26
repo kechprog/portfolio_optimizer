@@ -106,3 +106,6 @@ export interface ChartDataPoint {
   date: string;
   [allocatorName: string]: string | number;
 }
+
+// WebSocket types
+export * from './websocket';

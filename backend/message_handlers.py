@@ -43,6 +43,44 @@ ALLOCATOR_CLASSES: Dict[str, Type[Allocator]] = {
 }
 
 
+def transform_frontend_config(allocator_type: str, config: dict) -> dict:
+    """
+    Transform frontend config format to backend format.
+
+    Frontend sends:
+        update_interval: { value: number, unit: string } | null
+        target_return: number | null
+
+    Backend expects:
+        update_enabled: bool
+        update_interval_value: int
+        update_interval_unit: str
+        target_return_enabled: bool
+        target_return_value: float
+    """
+    transformed = config.copy()
+
+    # Transform update_interval to update_enabled/value/unit
+    update_interval = transformed.pop("update_interval", None)
+    if update_interval is not None:
+        transformed["update_enabled"] = True
+        transformed["update_interval_value"] = update_interval.get("value", 1)
+        transformed["update_interval_unit"] = update_interval.get("unit", "days")
+    else:
+        transformed["update_enabled"] = False
+
+    # Transform target_return to target_return_enabled/value (min_volatility only)
+    if allocator_type == "min_volatility":
+        target_return = transformed.pop("target_return", None)
+        if target_return is not None:
+            transformed["target_return_enabled"] = True
+            transformed["target_return_value"] = target_return
+        else:
+            transformed["target_return_enabled"] = False
+
+    return transformed
+
+
 def create_allocator_instance(allocator_type: str, config: dict) -> Allocator:
     """
     Create an allocator instance from a type string and configuration.
@@ -60,7 +98,10 @@ def create_allocator_instance(allocator_type: str, config: dict) -> Allocator:
     cls = ALLOCATOR_CLASSES.get(allocator_type)
     if cls is None:
         raise ValueError(f"Unknown allocator type: {allocator_type}")
-    return cls.from_config(config)
+
+    # Transform frontend config format to backend format
+    transformed_config = transform_frontend_config(allocator_type, config)
+    return cls.from_config(transformed_config)
 
 
 async def send_message(websocket: WebSocket, message: Any) -> None:

@@ -35,10 +35,10 @@ class MinVolatilityAllocator(Allocator):
         allow_shorting: bool = False,
         use_adj_close: bool = True,
         update_enabled: bool = False,
-        update_interval_value: int = 30,
+        update_interval_value: int = 1,
         update_interval_unit: str = "days",
         target_return_enabled: bool = False,
-        target_return_value: float = 0.1
+        target_return_value: float = 10.0
     ):
         """
         Initializes the MinVolatilityAllocator.
@@ -52,7 +52,7 @@ class MinVolatilityAllocator(Allocator):
             update_interval_value: Number of time units between rebalancing.
             update_interval_unit: Time unit for rebalancing ('days', 'weeks', or 'months').
             target_return_enabled: If True, optimizes for target return instead of pure min volatility.
-            target_return_value: Target annual return rate (e.g., 0.1 for 10%).
+            target_return_value: Target annual return rate as percentage (e.g., 10 for 10%).
         """
         if not name or not name.strip():
             raise ValueError("Allocator name cannot be empty.")
@@ -118,7 +118,8 @@ class MinVolatilityAllocator(Allocator):
         ef = EfficientFrontier(mu, S, weight_bounds=bounds)
 
         if self._target_return_enabled:
-            ef.efficient_return(target_return=self._target_return_value)
+            # Divide by 100 to convert percentage to decimal (e.g., 10% -> 0.1)
+            ef.efficient_return(target_return=self._target_return_value / 100.0)
         else:
             ef.min_volatility()
 
@@ -222,12 +223,12 @@ class MinVolatilityAllocator(Allocator):
         instruments = self.get_instruments()
 
         if not instruments:
-            logger.warning(f"({self._name}) No instruments configured")
-            return portfolio
+            raise ValueError(f"({self._name}) No instruments configured")
 
         if test_end_date <= fit_end_date:
-            logger.warning(f"({self._name}) test_end_date must be after fit_end_date")
-            return portfolio
+            raise ValueError(
+                f"test_end_date ({test_end_date}) must be after fit_end_date ({fit_end_date})"
+            )
 
         if progress_callback:
             await progress_callback(f"Optimizing MinVolatility for {self._name}...", 0, 1)
@@ -351,8 +352,8 @@ class MinVolatilityAllocator(Allocator):
             allow_shorting=config.get("allow_shorting", False),
             use_adj_close=config.get("use_adj_close", True),
             update_enabled=config.get("update_enabled", False),
-            update_interval_value=config.get("update_interval_value", 30),
+            update_interval_value=config.get("update_interval_value", 1),
             update_interval_unit=config.get("update_interval_unit", "days"),
             target_return_enabled=config.get("target_return_enabled", False),
-            target_return_value=config.get("target_return_value", 0.1)
+            target_return_value=config.get("target_return_value", 10.0)
         )

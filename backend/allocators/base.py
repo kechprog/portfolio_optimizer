@@ -73,7 +73,8 @@ class Portfolio:
             The active PortfolioSegment or None if no segment covers this date.
         """
         for segment in self.segments:
-            if segment.start_date <= query_date < segment.end_date:
+            # Use <= for end_date to match original app behavior (inclusive end)
+            if segment.start_date <= query_date <= segment.end_date:
                 return segment
         return None
 
