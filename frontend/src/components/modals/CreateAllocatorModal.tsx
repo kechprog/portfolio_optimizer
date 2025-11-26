@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Modal } from './Modal';
 import { Target, TrendingUp, Shield, ChevronRight } from 'lucide-react';
 import { AllocatorType } from '../../types';
@@ -55,9 +55,40 @@ export const CreateAllocatorModal: React.FC<CreateAllocatorModalProps> = ({
   onSelectType,
 }) => {
   const [selectedType, setSelectedType] = useState<AllocatorType | null>(null);
+  const [hoveredType, setHoveredType] = useState<AllocatorType | null>(null);
+  const [tooltipPosition, setTooltipPosition] = useState<'above' | 'below'>('below');
+  const containerRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const handleSelect = (type: AllocatorType) => {
     setSelectedType(type);
+  };
+
+  const handleMouseEnter = (type: AllocatorType) => {
+    const itemEl = itemRefs.current[type];
+    const containerEl = containerRef.current;
+
+    if (itemEl && containerEl) {
+      const itemRect = itemEl.getBoundingClientRect();
+      const containerRect = containerEl.getBoundingClientRect();
+
+      // Check if there's enough space above (approx 100px for tooltip)
+      const spaceAbove = itemRect.top - containerRect.top;
+      const spaceBelow = containerRect.bottom - itemRect.bottom;
+
+      // Prefer showing below, but show above if more space there and not enough below
+      if (spaceBelow < 100 && spaceAbove > spaceBelow) {
+        setTooltipPosition('above');
+      } else {
+        setTooltipPosition('below');
+      }
+    }
+
+    setHoveredType(type);
+  };
+
+  const handleMouseLeave = () => {
+    setHoveredType(null);
   };
 
   const handleNext = () => {
@@ -74,21 +105,29 @@ export const CreateAllocatorModal: React.FC<CreateAllocatorModalProps> = ({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="Create New Allocator" size="md">
-      <div className="flex flex-col gap-6">
+    <Modal isOpen={isOpen} onClose={handleClose} title="Create New Allocator" size="md" allowOverflow>
+      <div className="flex flex-col gap-6 overflow-visible">
         {/* Type Selection */}
         <div>
           <p className="text-text-secondary mb-4">
             Select the type of allocator you want to create:
           </p>
 
-          <div className="flex flex-col gap-3">
+          <div ref={containerRef} className="flex flex-col gap-3 overflow-visible">
             {ALLOCATOR_TYPES.map((allocatorType) => {
               const Icon = allocatorType.icon;
               const isSelected = selectedType === allocatorType.type;
+              const isHovered = hoveredType === allocatorType.type;
+              const showAbove = tooltipPosition === 'above';
 
               return (
-                <div key={allocatorType.type} className="relative group">
+                <div
+                  key={allocatorType.type}
+                  ref={(el) => { itemRefs.current[allocatorType.type] = el; }}
+                  className="relative"
+                  onMouseEnter={() => handleMouseEnter(allocatorType.type)}
+                  onMouseLeave={handleMouseLeave}
+                >
                   <button
                     onClick={() => handleSelect(allocatorType.type)}
                     className={`
@@ -119,19 +158,29 @@ export const CreateAllocatorModal: React.FC<CreateAllocatorModalProps> = ({
                     )}
                   </button>
 
-                  {/* Tooltip */}
-                  <div className="
-                    absolute left-1/2 -translate-x-1/2 bottom-full mb-2
+                  {/* Tooltip - dynamic position */}
+                  <div className={`
+                    absolute left-1/2 -translate-x-1/2
+                    ${showAbove ? 'bottom-full mb-2' : 'top-full mt-2'}
                     px-3 py-2 rounded-lg bg-surface-tertiary border border-border shadow-lg
                     text-sm text-text-secondary max-w-xs
-                    opacity-0 invisible group-hover:opacity-100 group-hover:visible
-                    transition-all duration-200 z-50
+                    transition-opacity duration-200 z-50
                     pointer-events-none
-                  ">
+                    ${isHovered ? 'opacity-100 visible' : 'opacity-0 invisible'}
+                  `}>
                     {allocatorType.tooltip}
                     {/* Tooltip arrow */}
-                    <div className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-8 border-r-8 border-t-8 border-l-transparent border-r-transparent border-t-border" />
-                    <div className="absolute left-1/2 -translate-x-1/2 top-full -mt-px w-0 h-0 border-l-[7px] border-r-[7px] border-t-[7px] border-l-transparent border-r-transparent border-t-surface-tertiary" />
+                    {showAbove ? (
+                      <>
+                        <div className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-8 border-r-8 border-t-8 border-l-transparent border-r-transparent border-t-border" />
+                        <div className="absolute left-1/2 -translate-x-1/2 top-full -mt-px w-0 h-0 border-l-[7px] border-r-[7px] border-t-[7px] border-l-transparent border-r-transparent border-t-surface-tertiary" />
+                      </>
+                    ) : (
+                      <>
+                        <div className="absolute left-1/2 -translate-x-1/2 bottom-full w-0 h-0 border-l-8 border-r-8 border-b-8 border-l-transparent border-r-transparent border-b-border" />
+                        <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-px w-0 h-0 border-l-[7px] border-r-[7px] border-b-[7px] border-l-transparent border-r-transparent border-b-surface-tertiary" />
+                      </>
+                    )}
                   </div>
                 </div>
               );

@@ -270,7 +270,7 @@ function App() {
           />
         }
         portfolio={
-          <Panel showFullscreen>
+          <Panel>
             <PortfolioInfo
               allocators={allocators}
               results={results}

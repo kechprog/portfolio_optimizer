@@ -1,70 +1,47 @@
 import React from 'react';
-import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
-import './styles.css';
 
 interface MainLayoutProps {
-  performanceChart: React.ReactNode;
-  allocatorList: React.ReactNode;
-  controlPanel: React.ReactNode;
-  portfolioInfo: React.ReactNode;
+  header: React.ReactNode;
+  chart: React.ReactNode;
+  allocators: React.ReactNode;
+  portfolio: React.ReactNode;
 }
 
 export const MainLayout: React.FC<MainLayoutProps> = ({
-  performanceChart,
-  allocatorList,
-  controlPanel,
-  portfolioInfo,
+  header,
+  chart,
+  allocators,
+  portfolio,
 }) => {
   return (
-    <div className="main-layout">
-      <PanelGroup direction="horizontal" className="panel-group">
-        {/* Left Panel - 60% default */}
-        <Panel defaultSize={60} minSize={30}>
-          <PanelGroup direction="vertical" className="panel-group">
-            {/* Performance Chart - 60% of left panel */}
-            <Panel defaultSize={60} minSize={20}>
-              <div style={{ height: '100%', padding: '8px' }}>
-                {performanceChart}
-              </div>
-            </Panel>
+    <div className="h-screen w-screen flex flex-col bg-surface overflow-hidden">
+      {/* Header */}
+      <header className="flex-shrink-0 border-b border-border">
+        {header}
+      </header>
 
-            {/* Vertical Resize Handle */}
-            <PanelResizeHandle className="resize-handle resize-handle-vertical" />
+      {/* Main content */}
+      <main className="flex-1 overflow-hidden p-4 lg:p-6">
+        <div className="h-full grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6">
+          {/* Left column - Chart and Allocators */}
+          <div className="lg:col-span-8 flex flex-col gap-4 lg:gap-6 min-h-0">
+            {/* Chart section - takes most of the space */}
+            <div className="flex-1 min-h-[300px] overflow-visible">
+              {chart}
+            </div>
 
-            {/* Allocator List - 40% of left panel */}
-            <Panel defaultSize={40} minSize={20}>
-              <div style={{ height: '100%', padding: '8px' }}>
-                {allocatorList}
-              </div>
-            </Panel>
-          </PanelGroup>
-        </Panel>
+            {/* Allocators section */}
+            <div className="flex-shrink-0">
+              {allocators}
+            </div>
+          </div>
 
-        {/* Horizontal Resize Handle */}
-        <PanelResizeHandle className="resize-handle resize-handle-horizontal" />
-
-        {/* Right Panel - 40% default */}
-        <Panel defaultSize={40} minSize={30}>
-          <PanelGroup direction="vertical" className="panel-group">
-            {/* Control Panel - 10% of right panel */}
-            <Panel defaultSize={10} minSize={5}>
-              <div style={{ height: '100%', padding: '8px' }}>
-                {controlPanel}
-              </div>
-            </Panel>
-
-            {/* Vertical Resize Handle */}
-            <PanelResizeHandle className="resize-handle resize-handle-vertical" />
-
-            {/* Portfolio Info - 90% of right panel */}
-            <Panel defaultSize={90} minSize={20}>
-              <div style={{ height: '100%', padding: '8px' }}>
-                {portfolioInfo}
-              </div>
-            </Panel>
-          </PanelGroup>
-        </Panel>
-      </PanelGroup>
+          {/* Right column - Portfolio details */}
+          <div className="lg:col-span-4 min-h-0 overflow-hidden">
+            {portfolio}
+          </div>
+        </div>
+      </main>
     </div>
   );
 };

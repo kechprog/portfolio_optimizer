@@ -7,9 +7,10 @@ interface ModalProps {
   title: string;
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg';
+  allowOverflow?: boolean;
 }
 
-export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, size = 'md' }) => {
+export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, size = 'md', allowOverflow = false }) => {
   const modalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -70,7 +71,7 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, 
         </div>
 
         {/* Content */}
-        <div className="px-6 py-5 overflow-y-auto flex-1">
+        <div className={`px-6 py-5 flex-1 ${allowOverflow ? 'overflow-visible' : 'overflow-y-auto'}`}>
           {children}
         </div>
       </div>
