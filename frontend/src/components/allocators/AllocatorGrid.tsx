@@ -29,11 +29,21 @@ const AllocatorCard: React.FC<{
   const config = ALLOCATOR_TYPE_CONFIG[allocator.type];
   const Icon = config.icon;
 
+  const handleCardClick = () => {
+    onToggle(allocator.id);
+  };
+
+  const handleButtonClick = (e: React.MouseEvent, action: () => void) => {
+    e.stopPropagation();
+    action();
+  };
+
   return (
     <div
+      onClick={handleCardClick}
       className={`
         group relative bg-surface-tertiary/50 rounded-xl border-2 transition-all duration-200
-        p-5 hover:bg-surface-tertiary
+        p-3 sm:p-5 hover:bg-surface-tertiary cursor-pointer
         ${allocator.enabled
           ? `${config.borderColor} ring-1 ring-accent/20`
           : 'border-transparent hover:border-border'
@@ -41,9 +51,13 @@ const AllocatorCard: React.FC<{
       `}
     >
       {/* Header Row */}
-      <div className="flex items-start gap-4">
+      <div className="flex items-start gap-3 sm:gap-4">
         {/* Checkbox */}
-        <label className="relative flex items-center cursor-pointer mt-1">
+        <label
+          className="relative flex items-center cursor-pointer mt-1"
+          title={allocator.enabled ? 'Click to disable allocator' : 'Click to enable allocator'}
+          onClick={(e) => e.stopPropagation()}
+        >
           <input
             type="checkbox"
             checked={allocator.enabled}
@@ -51,7 +65,7 @@ const AllocatorCard: React.FC<{
             className="sr-only peer"
           />
           <div className={`
-            w-5 h-5 rounded-md border-2 transition-all duration-200
+            w-5 h-5 sm:w-5 sm:h-5 rounded-md border-2 transition-all duration-200
             flex items-center justify-center
             ${allocator.enabled
               ? 'bg-accent border-accent'
@@ -67,46 +81,46 @@ const AllocatorCard: React.FC<{
         </label>
 
         {/* Icon */}
-        <div className={`p-3 rounded-xl ${config.bgColor} flex-shrink-0`}>
-          <Icon className={`w-6 h-6 ${config.color}`} />
+        <div className={`p-2 sm:p-3 rounded-xl ${config.bgColor} flex-shrink-0`}>
+          <Icon className={`w-5 h-5 sm:w-6 sm:h-6 ${config.color}`} />
         </div>
 
         {/* Info */}
         <div className="flex-1 min-w-0">
-          <h3 className="text-base font-semibold text-text-primary truncate">
+          <h3 className="text-sm sm:text-base font-semibold text-text-primary truncate">
             {getAllocatorName(allocator)}
           </h3>
-          <span className={`text-sm font-medium ${config.color}`}>
+          <span className={`text-xs sm:text-sm font-medium ${config.color}`}>
             {getAllocatorTypeDisplay(allocator.type)}
           </span>
         </div>
       </div>
 
-      {/* Actions - always visible on larger screens, hover on smaller */}
-      <div className="flex items-center gap-1 mt-4 pt-4 border-t border-border/50">
+      {/* Actions - icons only on small/medium, icons + text on 2xl+ */}
+      <div className="flex items-center justify-center gap-1 mt-3 sm:mt-4 pt-3 sm:pt-4 border-t border-border/50">
         <button
-          onClick={() => onConfigure(allocator.id)}
-          className="flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-secondary transition-colors text-sm"
-          title="Configure"
+          onClick={(e) => handleButtonClick(e, () => onConfigure(allocator.id))}
+          className="p-2 2xl:px-3 2xl:py-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-secondary transition-colors flex items-center gap-2"
+          title="Edit"
         >
           <Settings className="w-4 h-4" />
-          <span>Edit</span>
+          <span className="hidden 2xl:inline text-sm">Edit</span>
         </button>
         <button
-          onClick={() => onDuplicate(allocator.id)}
-          className="flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-secondary transition-colors text-sm"
-          title="Duplicate"
+          onClick={(e) => handleButtonClick(e, () => onDuplicate(allocator.id))}
+          className="p-2 2xl:px-3 2xl:py-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-secondary transition-colors flex items-center gap-2"
+          title="Copy"
         >
           <Copy className="w-4 h-4" />
-          <span>Copy</span>
+          <span className="hidden 2xl:inline text-sm">Copy</span>
         </button>
         <button
-          onClick={() => onDelete(allocator.id)}
-          className="flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-text-secondary hover:text-danger hover:bg-danger-muted transition-colors text-sm"
+          onClick={(e) => handleButtonClick(e, () => onDelete(allocator.id))}
+          className="p-2 2xl:px-3 2xl:py-2 rounded-lg text-text-secondary hover:text-danger hover:bg-danger-muted transition-colors flex items-center gap-2"
           title="Delete"
         >
           <Trash2 className="w-4 h-4" />
-          <span>Delete</span>
+          <span className="hidden 2xl:inline text-sm">Delete</span>
         </button>
       </div>
     </div>
@@ -120,16 +134,16 @@ const AddAllocatorCard: React.FC<{
     <button
       onClick={onClick}
       className={`
-        flex flex-col items-center justify-center gap-4 p-6
+        flex flex-col items-center justify-center gap-3 sm:gap-4 p-4 sm:p-6
         bg-surface-tertiary/30 rounded-xl border-2 border-dashed border-border
         hover:border-accent hover:bg-accent/5
-        transition-all duration-200 cursor-pointer min-h-[160px]
+        transition-all duration-200 cursor-pointer min-h-[120px] sm:min-h-[160px]
       `}
     >
-      <div className="p-4 rounded-full bg-accent/10">
-        <Plus className="w-7 h-7 text-accent" />
+      <div className="p-3 sm:p-4 rounded-full bg-accent/10">
+        <Plus className="w-6 h-6 sm:w-7 sm:h-7 text-accent" />
       </div>
-      <span className="text-base font-medium text-text-secondary">
+      <span className="text-sm sm:text-base font-medium text-text-secondary">
         Add Allocator
       </span>
     </button>
@@ -153,10 +167,10 @@ const AllocatorGrid: React.FC<AllocatorGridProps> = ({
 
   return (
     <>
-      <div className="bg-surface-secondary rounded-xl border border-border p-5">
+      <div className="bg-surface-secondary rounded-xl border border-border p-3 sm:p-5">
         {/* Grid of allocators - scrollable when exceeding 2 rows */}
-        <div className="max-h-[400px] overflow-y-auto overflow-x-hidden pr-1">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <div className="max-h-[300px] sm:max-h-[400px] overflow-y-auto overflow-x-hidden pr-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
             {allocators.map((allocator) => (
               <AllocatorCard
                 key={allocator.id}

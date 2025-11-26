@@ -105,15 +105,15 @@ export const CreateAllocatorModal: React.FC<CreateAllocatorModalProps> = ({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="Create New Allocator" size="md" allowOverflow>
-      <div className="flex flex-col gap-6 overflow-visible">
+    <Modal isOpen={isOpen} onClose={handleClose} title="Create New Allocator" size="md">
+      <div className="flex flex-col gap-6">
         {/* Type Selection */}
         <div>
           <p className="text-text-secondary mb-4">
             Select the type of allocator you want to create:
           </p>
 
-          <div ref={containerRef} className="flex flex-col gap-3 overflow-visible">
+          <div ref={containerRef} className="flex flex-col gap-3">
             {ALLOCATOR_TYPES.map((allocatorType) => {
               const Icon = allocatorType.icon;
               const isSelected = selectedType === allocatorType.type;
@@ -158,7 +158,7 @@ export const CreateAllocatorModal: React.FC<CreateAllocatorModalProps> = ({
                     )}
                   </button>
 
-                  {/* Tooltip - dynamic position */}
+                  {/* Tooltip - dynamic position, hidden on touch devices */}
                   <div className={`
                     absolute left-1/2 -translate-x-1/2
                     ${showAbove ? 'bottom-full mb-2' : 'top-full mt-2'}
@@ -166,7 +166,8 @@ export const CreateAllocatorModal: React.FC<CreateAllocatorModalProps> = ({
                     text-sm text-text-secondary max-w-xs
                     transition-opacity duration-200 z-50
                     pointer-events-none
-                    ${isHovered ? 'opacity-100 visible' : 'opacity-0 invisible'}
+                    hidden md:block
+                    ${isHovered ? 'md:opacity-100 md:visible' : 'opacity-0 invisible'}
                   `}>
                     {allocatorType.tooltip}
                     {/* Tooltip arrow */}

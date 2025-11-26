@@ -20,13 +20,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         {header}
       </header>
 
-      {/* Main content */}
-      <main className="flex-1 overflow-hidden p-4 lg:p-6">
-        <div className="h-full grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6">
+      {/* Main content - scrollable on mobile, fixed grid on desktop */}
+      <main className="flex-1 overflow-auto lg:overflow-hidden p-3 sm:p-4 lg:p-6">
+        <div className="lg:h-full flex flex-col lg:grid lg:grid-cols-12 gap-3 sm:gap-4 lg:gap-6">
           {/* Left column - Chart and Allocators */}
-          <div className="lg:col-span-8 flex flex-col gap-4 lg:gap-6 min-h-0">
-            {/* Chart section - takes most of the space */}
-            <div className="flex-1 min-h-[300px] overflow-visible">
+          <div className="lg:col-span-8 flex flex-col gap-3 sm:gap-4 lg:gap-6 min-h-0">
+            {/* Chart section */}
+            <div className="h-[250px] sm:h-[300px] lg:flex-1 lg:h-auto min-h-[200px]">
               {chart}
             </div>
 
@@ -37,7 +37,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           </div>
 
           {/* Right column - Portfolio details */}
-          <div className="lg:col-span-4 min-h-0 overflow-hidden">
+          <div className="lg:col-span-4 min-h-[300px] lg:min-h-0 lg:h-full">
             {portfolio}
           </div>
         </div>

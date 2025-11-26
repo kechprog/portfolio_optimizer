@@ -23,13 +23,13 @@ const CustomDateInput = React.forwardRef<HTMLButtonElement, { value?: string; on
   ({ value, onClick, title }, ref) => (
     <button
       type="button"
-      className="input text-sm py-1.5 px-3 min-w-[130px] text-left flex items-center gap-2"
+      className="input text-sm py-2.5 px-3 min-w-[110px] sm:min-w-[130px] text-left flex items-center gap-2"
       onClick={onClick}
       ref={ref}
       title={title}
     >
-      <Calendar className="w-4 h-4 text-text-secondary" />
-      <span>{value}</span>
+      <Calendar className="w-4 h-4 text-text-secondary flex-shrink-0" />
+      <span className="truncate">{value}</span>
     </button>
   )
 );
@@ -397,56 +397,73 @@ export const Header: React.FC<HeaderProps> = ({
   progress,
 }) => {
   return (
-    <div className="px-4 lg:px-6 py-3 flex flex-wrap items-center justify-between gap-4">
+    <div className="px-3 sm:px-4 lg:px-6 py-3 flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center justify-between gap-3 sm:gap-4">
       {/* Logo/Title */}
-      <div className="flex items-center gap-3">
-        <div className="p-2 bg-accent-muted rounded-lg">
-          <TrendingUp className="w-5 h-5 text-accent" />
+      <div className="flex items-center gap-3 justify-between sm:justify-start">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-accent-muted rounded-lg">
+            <TrendingUp className="w-5 h-5 text-accent" />
+          </div>
+          <div>
+            <h1 className="text-lg font-semibold text-text-primary">Portfolio Optimizer</h1>
+          </div>
         </div>
-        <div>
-          <h1 className="text-lg font-semibold text-text-primary">Portfolio Optimizer</h1>
-        </div>
+        {/* Mobile compute button - visible only on small screens */}
+        <button
+          onClick={onCompute}
+          disabled={isComputing}
+          className="btn-primary sm:hidden py-2.5"
+        >
+          {isComputing ? (
+            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          ) : (
+            <Play className="w-4 h-4" />
+          )}
+        </button>
       </div>
 
-      {/* Controls */}
-      <div className="flex flex-wrap items-center gap-4">
-        {/* Date Range */}
-        <div className="flex items-center gap-3">
+      {/* Controls - stacks vertically on mobile */}
+      <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 sm:gap-4">
+        {/* Date Range - stacked on mobile */}
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+          {/* Fit dates */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-text-muted font-medium">Fit:</span>
-            <DatePicker
-              selected={parseDate(dateRange.fit_start_date)}
-              onChange={(date) => date && onDateRangeChange({ ...dateRange, fit_start_date: formatDate(date) })}
-              onMonthChange={(date) => {
-                // Auto-save when month/year changes via header navigation
-                const current = parseDate(dateRange.fit_start_date);
-                const newDate = new Date(date.getFullYear(), date.getMonth(), Math.min(current.getDate(), new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()));
-                onDateRangeChange({ ...dateRange, fit_start_date: formatDate(newDate) });
-              }}
-              customInput={<CustomDateInput title="Fit start date" />}
-              dateFormat="yyyy-MM-dd"
-              popperClassName="date-picker-popper"
-              calendarClassName="custom-calendar"
-              renderCustomHeader={renderCustomHeader}
-            />
-            <span className="text-text-muted">-</span>
-            <DatePicker
-              selected={parseDate(dateRange.fit_end_date)}
-              onChange={(date) => date && onDateRangeChange({ ...dateRange, fit_end_date: formatDate(date) })}
-              onMonthChange={(date) => {
-                const current = parseDate(dateRange.fit_end_date);
-                const newDate = new Date(date.getFullYear(), date.getMonth(), Math.min(current.getDate(), new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()));
-                onDateRangeChange({ ...dateRange, fit_end_date: formatDate(newDate) });
-              }}
-              customInput={<CustomDateInput title="Fit end date" />}
-              dateFormat="yyyy-MM-dd"
-              popperClassName="date-picker-popper"
-              calendarClassName="custom-calendar"
-              renderCustomHeader={renderCustomHeader}
-            />
+            <span className="text-xs text-text-muted font-medium min-w-[28px]">Fit:</span>
+            <div className="flex items-center gap-1 sm:gap-2 flex-1">
+              <DatePicker
+                selected={parseDate(dateRange.fit_start_date)}
+                onChange={(date) => date && onDateRangeChange({ ...dateRange, fit_start_date: formatDate(date) })}
+                onMonthChange={(date) => {
+                  const current = parseDate(dateRange.fit_start_date);
+                  const newDate = new Date(date.getFullYear(), date.getMonth(), Math.min(current.getDate(), new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()));
+                  onDateRangeChange({ ...dateRange, fit_start_date: formatDate(newDate) });
+                }}
+                customInput={<CustomDateInput title="Fit start date" />}
+                dateFormat="yyyy-MM-dd"
+                popperClassName="date-picker-popper"
+                calendarClassName="custom-calendar"
+                renderCustomHeader={renderCustomHeader}
+              />
+              <span className="text-text-muted">-</span>
+              <DatePicker
+                selected={parseDate(dateRange.fit_end_date)}
+                onChange={(date) => date && onDateRangeChange({ ...dateRange, fit_end_date: formatDate(date) })}
+                onMonthChange={(date) => {
+                  const current = parseDate(dateRange.fit_end_date);
+                  const newDate = new Date(date.getFullYear(), date.getMonth(), Math.min(current.getDate(), new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()));
+                  onDateRangeChange({ ...dateRange, fit_end_date: formatDate(newDate) });
+                }}
+                customInput={<CustomDateInput title="Fit end date" />}
+                dateFormat="yyyy-MM-dd"
+                popperClassName="date-picker-popper"
+                calendarClassName="custom-calendar"
+                renderCustomHeader={renderCustomHeader}
+              />
+            </div>
           </div>
+          {/* Test date */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-text-muted font-medium">Test:</span>
+            <span className="text-xs text-text-muted font-medium min-w-[28px]">Test:</span>
             <DatePicker
               selected={parseDate(dateRange.test_end_date)}
               onChange={(date) => date && onDateRangeChange({ ...dateRange, test_end_date: formatDate(date) })}
@@ -464,41 +481,44 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Dividends Toggle */}
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={includeDividends}
-            onChange={(e) => onIncludeDividendsChange(e.target.checked)}
-            className="w-4 h-4 rounded border-border text-accent focus:ring-accent"
-          />
-          <DollarSign className="w-4 h-4 text-text-muted" />
-          <span className="text-sm text-text-secondary">Dividends</span>
-        </label>
+        {/* Bottom row on mobile: Dividends + Compute */}
+        <div className="flex items-center justify-between sm:justify-start gap-3 sm:gap-4">
+          {/* Dividends Toggle */}
+          <label className="flex items-center gap-2 cursor-pointer select-none py-2 sm:py-0">
+            <input
+              type="checkbox"
+              checked={includeDividends}
+              onChange={(e) => onIncludeDividendsChange(e.target.checked)}
+              className="w-5 h-5 sm:w-4 sm:h-4 rounded border-border text-accent focus:ring-accent"
+            />
+            <DollarSign className="w-4 h-4 text-text-muted" />
+            <span className="text-sm text-text-secondary">Dividends</span>
+          </label>
 
-        {/* Compute Button */}
-        <button
-          onClick={onCompute}
-          disabled={isComputing}
-          className="btn-primary"
-        >
-          {isComputing ? (
-            <>
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              <span>{progress?.message || 'Computing...'}</span>
-              {progress && (
-                <span className="text-white/70">
-                  ({progress.step}/{progress.total_steps})
-                </span>
-              )}
-            </>
-          ) : (
-            <>
-              <Play className="w-4 h-4" />
-              <span>Compute</span>
-            </>
-          )}
-        </button>
+          {/* Compute Button - hidden on mobile (shown in header) */}
+          <button
+            onClick={onCompute}
+            disabled={isComputing}
+            className="btn-primary hidden sm:inline-flex py-2.5"
+          >
+            {isComputing ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <span>{progress?.message || 'Computing...'}</span>
+                {progress && (
+                  <span className="text-white/70">
+                    ({progress.step}/{progress.total_steps})
+                  </span>
+                )}
+              </>
+            ) : (
+              <>
+                <Play className="w-4 h-4" />
+                <span>Compute</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );
