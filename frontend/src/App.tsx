@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { MainLayout, Panel, Header } from './components/layout';
 import { PerformanceChart } from './components/charts';
 import { AllocatorGrid, PortfolioInfo } from './components/allocators';
@@ -84,6 +84,8 @@ function App() {
 
   // Track pending computes to know when all are done
   const pendingComputesRef = useRef<Set<string>>(new Set());
+  // Track timeout IDs for pending computes (5 minute timeout)
+  const pendingTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   // Track enabled state locally (server doesn't track this)
   const [enabledIds, setEnabledIds] = useState<Set<string>>(new Set());
@@ -135,13 +137,69 @@ function App() {
     }
   };
 
+  // Helper to create typed allocator from server data (using useCallback to avoid stale closures)
+  const createTypedAllocatorCallback = useCallback((
+    id: string,
+    allocatorType: string,
+    config: Record<string, unknown>
+  ): Allocator => {
+    switch (allocatorType) {
+      case 'manual':
+        if (!isManualAllocatorConfig(config)) {
+          throw new Error('Invalid manual allocator config received from server');
+        }
+        return {
+          id,
+          type: 'manual',
+          config,
+          enabled: false,
+        };
+      case 'max_sharpe':
+        if (!isMaxSharpeAllocatorConfig(config)) {
+          throw new Error('Invalid max sharpe allocator config received from server');
+        }
+        return {
+          id,
+          type: 'max_sharpe',
+          config,
+          enabled: false,
+        };
+      case 'min_volatility':
+        if (!isMinVolatilityAllocatorConfig(config)) {
+          throw new Error('Invalid min volatility allocator config received from server');
+        }
+        return {
+          id,
+          type: 'min_volatility',
+          config,
+          enabled: false,
+        };
+      default:
+        throw new Error(`Unknown allocator type: ${allocatorType}`);
+    }
+  }, []);
+
+  // Cleanup helper for pending computes
+  const cleanupPendingCompute = useCallback((allocatorId: string) => {
+    pendingComputesRef.current.delete(allocatorId);
+    const timeout = pendingTimeoutsRef.current.get(allocatorId);
+    if (timeout) {
+      clearTimeout(timeout);
+      pendingTimeoutsRef.current.delete(allocatorId);
+    }
+    if (pendingComputesRef.current.size === 0) {
+      setIsComputing(false);
+      setComputingProgress(null);
+    }
+  }, []);
+
   // Set up WebSocket message handler
   useEffect(() => {
     setMessageHandler((message: ServerMessage) => {
       switch (message.type) {
         case 'allocator_created': {
           // Add the new allocator to state with server-assigned ID
-          const newAllocator = createTypedAllocator(
+          const newAllocator = createTypedAllocatorCallback(
             message.id,
             message.allocator_type,
             message.config
@@ -174,9 +232,25 @@ function App() {
                   return a;
                 }
                 return { ...a, config: message.config };
+              default:
+                console.warn(`Unknown allocator type received: ${(a as { type: string }).type}`);
+                return a;
             }
           }));
           setEditingAllocator(null);
+          break;
+        }
+
+        case 'allocators_list': {
+          // Replace allocators state with server's list
+          const serverAllocators = message.allocators.map((allocatorData) =>
+            createTypedAllocatorCallback(
+              allocatorData.id,
+              allocatorData.type,
+              allocatorData.config
+            )
+          );
+          setAllocators(serverAllocators);
           break;
         }
 
@@ -218,36 +292,38 @@ function App() {
             [message.allocator_id]: result,
           }));
 
-          // Track completion
-          pendingComputesRef.current.delete(message.allocator_id);
-          if (pendingComputesRef.current.size === 0) {
-            setIsComputing(false);
-            setComputingProgress(null);
-          }
+          // Track completion and clear timeout
+          cleanupPendingCompute(message.allocator_id);
           break;
         }
 
         case 'error': {
           console.error('Server error:', message.message);
-          // If error is for a compute, remove from pending
+          // If error is for a compute, remove from pending and clear timeout
           if (message.allocator_id) {
-            pendingComputesRef.current.delete(message.allocator_id);
-            if (pendingComputesRef.current.size === 0) {
-              setIsComputing(false);
-              setComputingProgress(null);
-            }
+            cleanupPendingCompute(message.allocator_id);
           }
           break;
         }
       }
     });
-  }, [setMessageHandler]);
+  }, [setMessageHandler, createTypedAllocatorCallback, cleanupPendingCompute]);
 
-  // Merge enabled state into allocators for display
-  const allocatorsWithEnabled = allocators.map(a => ({
+  // Cleanup pending computes on unmount
+  useEffect(() => {
+    return () => {
+      // Clear all pending compute timeouts
+      pendingTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
+      pendingTimeoutsRef.current.clear();
+      pendingComputesRef.current.clear();
+    };
+  }, []);
+
+  // Merge enabled state into allocators for display (memoized to prevent unnecessary re-renders)
+  const allocatorsWithEnabled = useMemo(() => allocators.map(a => ({
     ...a,
     enabled: enabledIds.has(a.id),
-  }));
+  })), [allocators, enabledIds]);
 
   // Allocator CRUD operations
   const handleToggleAllocator = useCallback((id: string) => {
@@ -344,6 +420,9 @@ function App() {
 
     setIsComputing(true);
     pendingComputesRef.current.clear();
+    // Clear any existing timeouts
+    pendingTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
+    pendingTimeoutsRef.current.clear();
 
     // Clear previous results for enabled allocators
     setResults(prev => {
@@ -355,9 +434,17 @@ function App() {
     // Send compute request for each enabled allocator
     for (const allocator of enabledAllocators) {
       pendingComputesRef.current.add(allocator.id);
+
+      // Set up 5-minute timeout for this compute
+      const timeoutId = setTimeout(() => {
+        console.warn(`Compute timeout for allocator ${allocator.id} after 5 minutes`);
+        cleanupPendingCompute(allocator.id);
+      }, 5 * 60 * 1000); // 5 minutes
+
+      pendingTimeoutsRef.current.set(allocator.id, timeoutId);
       wsCompute(allocator.id, dateRange, includeDividends);
     }
-  }, [allocatorsWithEnabled, dateRange, includeDividends, status, wsCompute]);
+  }, [allocatorsWithEnabled, dateRange, includeDividends, status, wsCompute, cleanupPendingCompute]);
 
   // Close modals
   const closeManualModal = () => {

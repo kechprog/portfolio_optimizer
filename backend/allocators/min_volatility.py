@@ -6,11 +6,22 @@ that minimize portfolio volatility.
 """
 
 from typing import Any, Dict, List, Set
+import logging
+import math
 
 import pandas as pd
 from pypfopt import EfficientFrontier, expected_returns, risk_models
 
 from .base import OptimizationAllocatorBase
+
+# Try to import PyPortfolioOpt's OptimizationError if available
+try:
+    from pypfopt.exceptions import OptimizationError
+except ImportError:
+    # Fallback if pypfopt doesn't expose OptimizationError
+    OptimizationError = Exception
+
+logger = logging.getLogger(__name__)
 
 
 class MinVolatilityAllocator(OptimizationAllocatorBase):
@@ -90,26 +101,45 @@ class MinVolatilityAllocator(OptimizationAllocatorBase):
         Returns:
             Dictionary mapping tickers to their optimal weights.
         """
-        mu = expected_returns.mean_historical_return(
-            prices, compounding=True, frequency=252
-        )
-        S = risk_models.CovarianceShrinkage(prices, frequency=252).ledoit_wolf()
+        try:
+            mu = expected_returns.mean_historical_return(
+                prices, compounding=True, frequency=252
+            )
+            S = risk_models.CovarianceShrinkage(prices, frequency=252).ledoit_wolf()
 
-        bounds = self._get_weight_bounds()
-        ef = EfficientFrontier(mu, S, weight_bounds=bounds)
+            bounds = self._get_weight_bounds()
+            ef = EfficientFrontier(mu, S, weight_bounds=bounds)
 
-        if self._target_return_enabled:
-            # Divide by 100 to convert percentage to decimal (e.g., 10% -> 0.1)
-            ef.efficient_return(target_return=self._target_return_value / 100.0)
-        else:
-            ef.min_volatility()
+            if self._target_return_enabled:
+                # Divide by 100 to convert percentage to decimal (e.g., 10% -> 0.1)
+                ef.efficient_return(target_return=self._target_return_value / 100.0)
+            else:
+                ef.min_volatility()
 
-        computed_allocations = ef.clean_weights()
+            computed_allocations = ef.clean_weights()
 
-        return {
-            inst: computed_allocations.get(inst, 0.0)
-            for inst in instruments
-        }
+            # Validate weights don't contain NaN or Inf
+            validated_allocations = {}
+            for ticker, weight in computed_allocations.items():
+                if math.isnan(weight) or math.isinf(weight):
+                    logger.warning(
+                        f"Invalid weight for {ticker}: {weight}, replacing with 0.0"
+                    )
+                    validated_allocations[ticker] = 0.0
+                else:
+                    validated_allocations[ticker] = weight
+
+            return {
+                inst: validated_allocations.get(inst, 0.0)
+                for inst in instruments
+            }
+
+        except (ValueError, OptimizationError) as e:
+            logger.error(f"MinVolatility optimization failed: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"Unexpected error in MinVolatility optimization: {e}")
+            return {}
 
     def get_config(self) -> Dict[str, Any]:
         """

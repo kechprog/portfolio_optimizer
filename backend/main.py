@@ -15,7 +15,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
-from config import WS_HOST, WS_PORT
+from config import WS_HOST, WS_PORT, CORS_ORIGINS
 from connection_state import ConnectionState
 from message_handlers import MESSAGE_HANDLERS
 from schemas import (
@@ -52,9 +52,11 @@ app = FastAPI(
 )
 
 # Add CORS middleware for frontend development
+# WARNING: Using wildcard ["*"] in allow_origins is insecure for production.
+# In production, always specify exact origins via the CORS_ORIGINS environment variable.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify exact origins
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

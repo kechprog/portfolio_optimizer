@@ -263,6 +263,17 @@ class OptimizationAllocatorBase(Allocator):
                 f"Optimization allocator requires at least 2 instruments, got {len(self._instruments)}"
             )
 
+        # Validate update_interval_value
+        if update_interval_value < 1:
+            raise ValueError("update_interval_value must be at least 1")
+
+        # Validate update_interval_unit
+        valid_units = ["days", "weeks", "months"]
+        if update_interval_unit not in valid_units:
+            raise ValueError(
+                f"update_interval_unit must be one of {valid_units}, got '{update_interval_unit}'"
+            )
+
         self._allow_shorting = allow_shorting
         self._use_adj_close = use_adj_close
         self._update_enabled = update_enabled
@@ -341,6 +352,11 @@ class OptimizationAllocatorBase(Allocator):
         prices = pd.concat(prices_list, axis=1)
         # Forward fill then backward fill to handle missing data
         prices = prices.ffill().bfill()
+
+        # Check if DataFrame is all NaN or empty after filling
+        if prices.isna().all().all():
+            logger.warning("Price DataFrame is all NaN after forward/backward fill")
+            return None
 
         return prices
 

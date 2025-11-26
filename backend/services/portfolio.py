@@ -5,6 +5,7 @@ Computes cumulative returns for a portfolio over time.
 """
 
 import logging
+import os
 from datetime import date, timedelta
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 
@@ -48,14 +49,27 @@ async def compute_performance(
 
     # Fetch price data for all tickers
     price_data: Dict[str, pd.DataFrame] = {}
+    failed_tickers: List[str] = []
     for ticker in all_tickers:
         try:
             df = await price_fetcher(ticker, fit_end_date, test_end_date)
             if df is not None and not df.empty:
                 price_data[ticker] = df
-        except Exception:
-            # Skip tickers that fail to fetch
+            else:
+                failed_tickers.append(ticker)
+                logger.warning(f"Failed to fetch price data for {ticker}: Empty or None result")
+        except Exception as e:
+            # Track and log failed tickers
+            failed_tickers.append(ticker)
+            logger.warning(f"Failed to fetch price data for {ticker}: {e}")
             continue
+
+    # If ALL tickers failed, raise an exception
+    if not price_data and all_tickers:
+        raise ValueError(
+            f"Failed to fetch price data for all tickers. "
+            f"Failed tickers ({len(failed_tickers)}): {', '.join(failed_tickers)}"
+        )
 
     if not price_data:
         return {"dates": [], "cumulative_returns": []}
@@ -207,7 +221,8 @@ async def compute_performance_with_segments(
 
 def calculate_metrics(
     cumulative_returns: List[float],
-    dates: List[str]
+    dates: List[str],
+    risk_free_rate: Optional[float] = None
 ) -> Dict[str, Any]:
     """
     Calculates performance metrics from cumulative returns.
@@ -215,13 +230,15 @@ def calculate_metrics(
     Args:
         cumulative_returns: List of cumulative return percentages.
         dates: List of date strings (ISO format).
+        risk_free_rate: Annual risk-free rate as a percentage (e.g., 4.0 for 4%).
+            If not provided, defaults to environment variable RISK_FREE_RATE or 4.0.
 
     Returns:
         Dictionary with performance metrics:
             - total_return: Final cumulative return percentage
             - annualized_return: CAGR (Compound Annual Growth Rate)
             - volatility: Annualized standard deviation of daily returns
-            - sharpe_ratio: Risk-adjusted return (assumes 4% risk-free rate)
+            - sharpe_ratio: Risk-adjusted return
             - max_drawdown: Maximum peak-to-trough decline
     """
     if not cumulative_returns or not dates or len(dates) < 2:
@@ -282,8 +299,10 @@ def calculate_metrics(
     # Annualize volatility (sqrt(252) for trading days)
     annualized_volatility = daily_volatility * (252 ** 0.5)
 
-    # Sharpe Ratio (assuming 4% risk-free rate)
-    risk_free_rate = 4.0
+    # Sharpe Ratio - get risk-free rate from parameter, environment variable, or default
+    if risk_free_rate is None:
+        risk_free_rate = float(os.environ.get('RISK_FREE_RATE', 4.0))
+
     if annualized_volatility > 0:
         sharpe_ratio = (annualized_return - risk_free_rate) / annualized_volatility
     else:

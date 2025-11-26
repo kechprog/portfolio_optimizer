@@ -6,6 +6,7 @@ that tracks allocators and caches data for that session.
 """
 
 import asyncio
+import copy
 import logging
 from typing import Any
 from uuid import uuid4
@@ -97,7 +98,7 @@ class ConnectionState:
             logger.debug(f"Deleted allocator {allocator_id}")
             return True
 
-    def get_allocator(self, allocator_id: str) -> dict[str, Any] | None:
+    async def get_allocator(self, allocator_id: str) -> dict[str, Any] | None:
         """
         Get an allocator by ID.
 
@@ -105,25 +106,31 @@ class ConnectionState:
             allocator_id: ID of the allocator to retrieve.
 
         Returns:
-            The allocator dictionary if found, None otherwise.
+            A deep copy of the allocator dictionary if found, None otherwise.
+            Returns a copy to prevent mutation of internal state.
         """
-        return self.allocators.get(allocator_id)
+        async with self._lock:
+            allocator = self.allocators.get(allocator_id)
+            return copy.deepcopy(allocator) if allocator is not None else None
 
-    def list_allocators(self) -> list[dict[str, Any]]:
+    async def list_allocators(self) -> list[dict[str, Any]]:
         """
         List all allocators in the connection state.
 
         Returns:
-            List of allocator dictionaries (without instance objects).
+            A deep copy of allocator dictionaries (without instance objects).
+            Returns a copy to prevent mutation of internal state.
         """
-        return [
-            {
-                "id": alloc["id"],
-                "type": alloc["type"],
-                "config": alloc["config"],
-            }
-            for alloc in self.allocators.values()
-        ]
+        async with self._lock:
+            allocators = [
+                {
+                    "id": alloc["id"],
+                    "type": alloc["type"],
+                    "config": alloc["config"],
+                }
+                for alloc in self.allocators.values()
+            ]
+            return copy.deepcopy(allocators)
 
     def get_matrix_cache(self, cache_key: str) -> Any | None:
         """

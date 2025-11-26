@@ -2,6 +2,7 @@
 Price fetcher service with Alpha Vantage API integration and SQLite caching.
 """
 import asyncio
+import logging
 from datetime import date, datetime
 from typing import Dict, Any, Optional
 
@@ -14,6 +15,8 @@ from database import (
     get_cached_price_data,
     store_price_data,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class PriceFetcherError(Exception):
@@ -68,7 +71,7 @@ async def fetch_from_alpha_vantage(ticker: str) -> Dict[str, Any]:
         "datatype": "json"
     }
 
-    print(f"Fetching data for {ticker} from Alpha Vantage API...")
+    logger.info(f"Fetching data for {ticker} from Alpha Vantage API...")
 
     timeout = aiohttp.ClientTimeout(total=30)
 
@@ -97,7 +100,7 @@ async def fetch_from_alpha_vantage(ticker: str) -> Dict[str, Any]:
                     raise APIError(f"No time series data found for {ticker}. Response: {list(data.keys())}")
 
                 time_series = data[time_series_key]
-                print(f"Successfully fetched {len(time_series)} days of data for {ticker}")
+                logger.info(f"Successfully fetched {len(time_series)} days of data for {ticker}")
 
                 return time_series
 
@@ -201,7 +204,7 @@ async def get_price_data(
 
     if cached is None:
         # Not in cache - fetch all data
-        print(f"Cache miss for {ticker}, fetching from API...")
+        logger.info(f"Cache miss for {ticker}, fetching from API...")
         time_series = await fetch_from_alpha_vantage(ticker)
 
         # Determine date range from fetched data
@@ -218,7 +221,7 @@ async def get_price_data(
 
     # Check if we need to refetch (end_date is after cached data)
     if end_date > cached['last_date']:
-        print(f"Cache stale for {ticker} (cached until {cached['last_date']}, need {end_date}), refetching...")
+        logger.info(f"Cache stale for {ticker} (cached until {cached['last_date']}, need {end_date}), refetching...")
         time_series = await fetch_from_alpha_vantage(ticker)
 
         # Determine date range from fetched data
@@ -241,7 +244,7 @@ async def get_price_data(
         )
 
     # Cache hit - use cached data
-    print(f"Cache hit for {ticker} ({cached['first_date']} to {cached['last_date']})")
+    logger.debug(f"Cache hit for {ticker} ({cached['first_date']} to {cached['last_date']})")
     df = parse_time_series_to_dataframe(cached['data'])
     return filter_dataframe_by_date(df, start_date, end_date)
 
@@ -278,10 +281,10 @@ async def get_multiple_price_data(
                 df = await get_price_data(ticker, start_date, end_date)
                 return (ticker, df, None)
             except PriceFetcherError as e:
-                print(f"Error fetching {ticker}: {e}")
+                logger.warning(f"Error fetching {ticker}: {e}")
                 return (ticker, None, str(e))
             except Exception as e:
-                print(f"Unexpected error fetching {ticker}: {e}")
+                logger.error(f"Unexpected error fetching {ticker}: {e}")
                 return (ticker, None, str(e))
 
     # Create tasks for all tickers

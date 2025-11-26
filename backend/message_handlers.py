@@ -4,6 +4,7 @@ WebSocket message handlers.
 Each handler processes a specific message type and sends appropriate responses.
 """
 
+import asyncio
 import logging
 from datetime import date
 from typing import Any, Dict, Type
@@ -165,7 +166,7 @@ async def handle_update_allocator(
     """
     try:
         # Get existing allocator to determine its type
-        existing = state.get_allocator(message.id)
+        existing = await state.get_allocator(message.id)
         if existing is None:
             await send_message(
                 websocket,
@@ -252,7 +253,7 @@ async def handle_list_allocators(
         message: The list allocators message.
     """
     try:
-        allocators = state.list_allocators()
+        allocators = await state.list_allocators()
         response = AllocatorsList(allocators=allocators)
         await send_message(websocket, response)
         logger.debug(f"Listed {len(allocators)} allocators")
@@ -280,7 +281,7 @@ async def handle_compute_portfolio(
 
     try:
         # Check if allocator exists and get its instance
-        allocator_data = state.get_allocator(allocator_id)
+        allocator_data = await state.get_allocator(allocator_id)
         if allocator_data is None:
             await send_message(
                 websocket,
@@ -326,16 +327,28 @@ async def handle_compute_portfolio(
         # Send initial progress
         await progress_callback("Starting portfolio computation...", 0, 4)
 
-        # Compute the portfolio allocations
+        # Compute the portfolio allocations with a timeout
         await progress_callback("Computing allocations...", 1, 4)
-        portfolio: Portfolio = await allocator_instance.compute(
-            fit_start_date=fit_start_date,
-            fit_end_date=fit_end_date,
-            test_end_date=test_end_date,
-            include_dividends=message.include_dividends,
-            price_fetcher=price_fetcher,
-            progress_callback=progress_callback,
-        )
+        try:
+            portfolio: Portfolio = await asyncio.wait_for(
+                allocator_instance.compute(
+                    fit_start_date=fit_start_date,
+                    fit_end_date=fit_end_date,
+                    test_end_date=test_end_date,
+                    include_dividends=message.include_dividends,
+                    price_fetcher=price_fetcher,
+                    progress_callback=progress_callback,
+                ),
+                timeout=300  # 5 minutes timeout
+            )
+        except asyncio.TimeoutError:
+            error_msg = f"Computation timed out after 300 seconds for allocator {allocator_id}"
+            logger.error(error_msg)
+            await send_message(
+                websocket,
+                Error(message="Computation timed out after 5 minutes. Please try with a shorter date range or fewer assets.", allocator_id=allocator_id),
+            )
+            return
 
         # Convert portfolio segments to dict format for the Result message
         segments = []

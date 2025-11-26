@@ -302,8 +302,10 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ results, allocators
   }, [zoomRange]);
 
   // Also handle mouse up outside the container
+  const handleGlobalMouseUpRef = useRef<(e: MouseEvent) => void>(() => {});
+
   useEffect(() => {
-    const handleGlobalMouseUp = (e: MouseEvent) => {
+    handleGlobalMouseUpRef.current = (e: MouseEvent) => {
       if (e.button === 0) {
         setIsSelecting(false);
       } else if (e.button === 2) {
@@ -311,10 +313,16 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ results, allocators
         panStartRef.current = null;
       }
     };
+  }, []);
+
+  useEffect(() => {
+    const handleMouseUp = (e: MouseEvent) => {
+      handleGlobalMouseUpRef.current(e);
+    };
 
     if (isPanning || isSelecting) {
-      window.addEventListener('mouseup', handleGlobalMouseUp);
-      return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+      window.addEventListener('mouseup', handleMouseUp);
+      return () => window.removeEventListener('mouseup', handleMouseUp);
     }
   }, [isPanning, isSelecting]);
 

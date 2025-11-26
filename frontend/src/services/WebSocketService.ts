@@ -1,22 +1,23 @@
-export type WebSocketStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error';
+import { ConnectionStatus } from '../types/websocket';
 
 export interface WebSocketServiceConfig {
   url: string;
-  onStatusChange: (status: WebSocketStatus) => void;
+  onStatusChange: (status: ConnectionStatus) => void;
   onMessage: (message: any) => void;
   onError: (error: Event | Error) => void;
 }
 
 export class WebSocketService {
   private ws: WebSocket | null = null;
-  private status: WebSocketStatus = 'disconnected';
+  private status: ConnectionStatus = 'disconnected';
   private reconnectAttempts: number = 0;
   private readonly maxReconnectAttempts: number = 5;
   private reconnectTimeoutId: number | null = null;
   private isCleanClose: boolean = false;
+  private isReconnecting: boolean = false;
 
   private readonly url: string;
-  private readonly onStatusChange: (status: WebSocketStatus) => void;
+  private readonly onStatusChange: (status: ConnectionStatus) => void;
   private readonly onMessage: (message: any) => void;
   private readonly onError: (error: Event | Error) => void;
 
@@ -33,6 +34,15 @@ export class WebSocketService {
   public connect(): void {
     if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
       return;
+    }
+
+    // Clean up old WebSocket before creating new one
+    if (this.ws) {
+      this.clearEventHandlers();
+      if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+        this.ws.close();
+      }
+      this.ws = null;
     }
 
     this.setStatus('connecting');
@@ -67,7 +77,7 @@ export class WebSocketService {
   /**
    * Get current connection status
    */
-  public getStatus(): WebSocketStatus {
+  public getStatus(): ConnectionStatus {
     return this.status;
   }
 
@@ -144,6 +154,11 @@ export class WebSocketService {
    */
   private handleError(event: Event): void {
     this.onError(event);
+
+    // Trigger reconnection on error if not already reconnecting
+    if (this.status !== 'reconnecting' && !this.isReconnecting) {
+      this.attemptReconnect();
+    }
   }
 
   /**
@@ -164,12 +179,34 @@ export class WebSocketService {
    * Attempt to reconnect with exponential backoff
    */
   private attemptReconnect(): void {
+    // Prevent concurrent reconnection attempts
+    if (this.isReconnecting) {
+      return;
+    }
+
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       this.setStatus('error');
+      this.isReconnecting = false;
       console.error('Max reconnection attempts reached');
       return;
     }
 
+    // Clear any existing reconnect timeout
+    if (this.reconnectTimeoutId) {
+      clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = null;
+    }
+
+    // Ensure old WebSocket is properly closed before creating new one
+    if (this.ws) {
+      this.clearEventHandlers();
+      if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+        this.ws.close();
+      }
+      this.ws = null;
+    }
+
+    this.isReconnecting = true;
     this.setStatus('reconnecting');
     this.reconnectAttempts++;
 
@@ -183,6 +220,7 @@ export class WebSocketService {
     );
 
     this.reconnectTimeoutId = window.setTimeout(() => {
+      this.isReconnecting = false;
       this.connect();
     }, delay);
   }
@@ -200,7 +238,7 @@ export class WebSocketService {
   /**
    * Update status and notify callback
    */
-  private setStatus(status: WebSocketStatus): void {
+  private setStatus(status: ConnectionStatus): void {
     if (this.status !== status) {
       this.status = status;
       this.onStatusChange(status);
