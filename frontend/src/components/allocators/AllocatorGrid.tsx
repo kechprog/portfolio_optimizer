@@ -154,21 +154,23 @@ const AllocatorGrid: React.FC<AllocatorGridProps> = ({
   return (
     <>
       <div className="bg-surface-secondary rounded-xl border border-border p-5">
-        {/* Grid of allocators */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {allocators.map((allocator) => (
-            <AllocatorCard
-              key={allocator.id}
-              allocator={allocator}
-              onToggle={onToggle}
-              onConfigure={onConfigure}
-              onDuplicate={onDuplicate}
-              onDelete={onDelete}
-            />
-          ))}
+        {/* Grid of allocators - scrollable when exceeding 2 rows */}
+        <div className="max-h-[400px] overflow-y-auto overflow-x-hidden pr-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {allocators.map((allocator) => (
+              <AllocatorCard
+                key={allocator.id}
+                allocator={allocator}
+                onToggle={onToggle}
+                onConfigure={onConfigure}
+                onDuplicate={onDuplicate}
+                onDelete={onDelete}
+              />
+            ))}
 
-          {/* Add Button */}
-          <AddAllocatorCard onClick={() => setShowCreateModal(true)} />
+            {/* Add Button */}
+            <AddAllocatorCard onClick={() => setShowCreateModal(true)} />
+          </div>
         </div>
 
         {/* Empty state */}

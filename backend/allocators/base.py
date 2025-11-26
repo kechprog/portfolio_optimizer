@@ -495,6 +495,19 @@ class OptimizationAllocatorBase(Allocator):
         current_date = fit_end_date
         segment_count = 0
 
+        # Pre-calculate total segments for accurate progress tracking
+        total_segments = 0
+        temp_date = fit_end_date
+        while temp_date < test_end_date:
+            total_segments += 1
+            if isinstance(delta, timedelta):
+                temp_date = temp_date + delta
+            else:
+                temp_date = (pd.Timestamp(temp_date) + delta).date()
+
+        if total_segments == 0:
+            total_segments = 1  # At least one segment
+
         while current_date < test_end_date:
             try:
                 # Fetch prices from fit_start to current_date
@@ -546,9 +559,9 @@ class OptimizationAllocatorBase(Allocator):
             segment_count += 1
             if progress_callback:
                 await progress_callback(
-                    f"Optimizing {optimization_name} for {self._name} (segment {segment_count})...",
+                    f"Optimizing {optimization_name} for {self._name} (segment {segment_count}/{total_segments})...",
                     segment_count,
-                    segment_count + 1
+                    total_segments
                 )
 
             current_date = segment_end_date
@@ -556,8 +569,8 @@ class OptimizationAllocatorBase(Allocator):
         if progress_callback:
             await progress_callback(
                 f"{optimization_name} optimization complete for {self._name} ({segment_count} segments)",
-                segment_count,
-                segment_count
+                total_segments,
+                total_segments
             )
 
         return portfolio

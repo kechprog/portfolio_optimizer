@@ -7,11 +7,39 @@ that tracks allocators and caches data for that session.
 
 import asyncio
 import copy
+import hashlib
+import json
 import logging
 from typing import Any
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
+
+
+def create_compute_cache_key(
+    allocator_id: str,
+    allocator_config: dict,
+    fit_start_date: str,
+    fit_end_date: str,
+    test_end_date: str,
+    include_dividends: bool
+) -> str:
+    """
+    Create a cache key from compute parameters.
+
+    Returns a hash that uniquely identifies the computation request.
+    """
+    cache_data = {
+        "allocator_id": allocator_id,
+        "config": allocator_config,
+        "fit_start_date": fit_start_date,
+        "fit_end_date": fit_end_date,
+        "test_end_date": test_end_date,
+        "include_dividends": include_dividends,
+    }
+    # Use JSON for deterministic serialization, then hash
+    data_str = json.dumps(cache_data, sort_keys=True)
+    return hashlib.sha256(data_str.encode()).hexdigest()
 
 
 class ConnectionState:
@@ -27,6 +55,7 @@ class ConnectionState:
         """Initialize empty connection state."""
         self.allocators: dict[str, Any] = {}
         self.matrix_cache: dict[str, Any] = {}
+        self.results_cache: dict[str, Any] = {}  # Cache for computation results
         self._lock = asyncio.Lock()
 
     async def add_allocator(
@@ -168,4 +197,55 @@ class ConnectionState:
         async with self._lock:
             self.allocators.clear()
             self.matrix_cache.clear()
+            self.results_cache.clear()
             logger.debug("Cleared all connection state")
+
+    async def get_cached_result(self, cache_key: str) -> dict[str, Any] | None:
+        """
+        Get cached computation result.
+
+        Args:
+            cache_key: Hash key for the cached result.
+
+        Returns:
+            The cached result dictionary if found, None otherwise.
+        """
+        async with self._lock:
+            result = self.results_cache.get(cache_key)
+            if result:
+                logger.debug(f"Cache hit for key {cache_key[:16]}...")
+            return result
+
+    async def set_cached_result(self, cache_key: str, result: dict[str, Any]) -> None:
+        """
+        Store a computation result in the cache.
+
+        Args:
+            cache_key: Hash key for the result.
+            result: The result dictionary to cache.
+        """
+        async with self._lock:
+            self.results_cache[cache_key] = result
+            logger.debug(f"Cached result under key {cache_key[:16]}...")
+
+    async def invalidate_allocator_cache(self, allocator_id: str) -> int:
+        """
+        Invalidate all cached results for a specific allocator.
+
+        Args:
+            allocator_id: ID of the allocator whose cache should be cleared.
+
+        Returns:
+            Number of cache entries removed.
+        """
+        async with self._lock:
+            # Find and remove all cache entries for this allocator
+            keys_to_remove = [
+                key for key in self.results_cache.keys()
+                if self.results_cache[key].get("allocator_id") == allocator_id
+            ]
+            for key in keys_to_remove:
+                del self.results_cache[key]
+            if keys_to_remove:
+                logger.debug(f"Invalidated {len(keys_to_remove)} cache entries for allocator {allocator_id}")
+            return len(keys_to_remove)

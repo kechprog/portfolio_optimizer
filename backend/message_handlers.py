@@ -16,7 +16,7 @@ from allocators.base import Allocator, Portfolio
 from allocators.manual import ManualAllocator
 from allocators.max_sharpe import MaxSharpeAllocator
 from allocators.min_volatility import MinVolatilityAllocator
-from connection_state import ConnectionState
+from connection_state import ConnectionState, create_compute_cache_key
 from schemas import (
     AllocatorCreated,
     AllocatorDeleted,
@@ -184,6 +184,9 @@ async def handle_update_allocator(
         allocator_type = existing["type"]
         allocator_instance = create_allocator_instance(allocator_type, message.config)
 
+        # Invalidate cached results for this allocator since config changed
+        await state.invalidate_allocator_cache(message.id)
+
         # Update the stored state with the new config and instance
         if await state.update_allocator(
             message.id, message.config, allocator_instance=allocator_instance
@@ -223,6 +226,9 @@ async def handle_delete_allocator(
         message: The delete allocator message.
     """
     try:
+        # Invalidate cached results for this allocator
+        await state.invalidate_allocator_cache(message.id)
+
         if await state.delete_allocator(message.id):
             response = AllocatorDeleted(id=message.id)
             await send_message(websocket, response)
@@ -274,6 +280,7 @@ async def handle_compute_portfolio(
 
     Executes the allocator's compute method to generate portfolio allocations,
     then calculates performance metrics for the resulting portfolio.
+    Results are cached to prevent recomputation of unchanged allocators.
 
     Args:
         websocket: The WebSocket connection.
@@ -304,6 +311,37 @@ async def handle_compute_portfolio(
                     allocator_id=allocator_id,
                 ),
             )
+            return
+
+        # Check cache before computing
+        cache_key = create_compute_cache_key(
+            allocator_id=allocator_id,
+            allocator_config=allocator_data.get("config", {}),
+            fit_start_date=message.fit_start_date,
+            fit_end_date=message.fit_end_date,
+            test_end_date=message.test_end_date,
+            include_dividends=message.include_dividends,
+        )
+
+        cached_result = await state.get_cached_result(cache_key)
+        if cached_result:
+            # Send cached result immediately
+            logger.info(f"Returning cached result for allocator {allocator_id}")
+            await send_message(
+                websocket,
+                Progress(
+                    allocator_id=allocator_id,
+                    message="Using cached result",
+                    step=1,
+                    total_steps=1,
+                ),
+            )
+            result = Result(
+                allocator_id=allocator_id,
+                segments=cached_result["segments"],
+                performance=cached_result["performance"],
+            )
+            await send_message(websocket, result)
             return
 
         # Parse dates from strings to date objects
@@ -380,6 +418,13 @@ async def handle_compute_portfolio(
         performance["stats"] = stats
 
         await progress_callback("Computation complete", 4, 4)
+
+        # Cache the result for future use
+        await state.set_cached_result(cache_key, {
+            "allocator_id": allocator_id,
+            "segments": segments,
+            "performance": performance,
+        })
 
         # Send the result
         result = Result(

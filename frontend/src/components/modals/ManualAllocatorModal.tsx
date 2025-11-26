@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Modal } from './Modal';
 import { Plus, X } from 'lucide-react';
 import { Allocator, ManualAllocatorConfig } from '../../types';
@@ -26,6 +26,8 @@ export const ManualAllocatorModal: React.FC<ManualAllocatorModalProps> = ({
   const [rows, setRows] = useState<AllocationRow[]>([
     { id: crypto.randomUUID(), ticker: '', allocation: 0 },
   ]);
+  const [focusNewRow, setFocusNewRow] = useState(false);
+  const lastInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -47,6 +49,21 @@ export const ManualAllocatorModal: React.FC<ManualAllocatorModalProps> = ({
 
   const handleAddRow = () => {
     setRows([...rows, { id: crypto.randomUUID(), ticker: '', allocation: 0 }]);
+    setFocusNewRow(true);
+  };
+
+  useEffect(() => {
+    if (focusNewRow && lastInputRef.current) {
+      lastInputRef.current.focus();
+      setFocusNewRow(false);
+    }
+  }, [focusNewRow, rows]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAddRow();
+    }
   };
 
   const handleRemoveRow = (id: string) => {
@@ -111,42 +128,47 @@ export const ManualAllocatorModal: React.FC<ManualAllocatorModalProps> = ({
           <label className="block text-sm font-medium text-text-secondary mb-2">
             Allocations
           </label>
-          <div className="flex flex-col gap-2">
-            {rows.map((row) => (
-              <div key={row.id} className="flex items-center gap-3">
-                <input
-                  type="text"
-                  className="input flex-1 uppercase"
-                  placeholder="TICKER"
-                  value={row.ticker}
-                  onChange={(e) => handleTickerChange(row.id, e.target.value)}
-                />
-                <div className="relative flex-1">
+          <div className="max-h-[300px] overflow-y-auto pr-1 -mr-1">
+            <div className="flex flex-col gap-2">
+              {rows.map((row, index) => (
+                <div key={row.id} className="flex items-center gap-3">
                   <input
-                    type="number"
-                    className="input pr-8"
-                    placeholder="0"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    value={row.allocation || ''}
-                    onChange={(e) => handleAllocationChange(row.id, e.target.value)}
+                    type="text"
+                    className="input flex-1 uppercase"
+                    placeholder="TICKER"
+                    value={row.ticker}
+                    onChange={(e) => handleTickerChange(row.id, e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    ref={index === rows.length - 1 ? lastInputRef : undefined}
                   />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted text-sm pointer-events-none">
-                    %
-                  </span>
+                  <div className="relative flex-1">
+                    <input
+                      type="number"
+                      className="input pr-8"
+                      placeholder="0"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      value={row.allocation || ''}
+                      onChange={(e) => handleAllocationChange(row.id, e.target.value)}
+                      onKeyDown={handleKeyDown}
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted text-sm pointer-events-none">
+                      %
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveRow(row.id)}
+                    disabled={rows.length === 1}
+                    className="p-2 rounded-lg text-text-muted hover:text-danger hover:bg-danger-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                    aria-label="Remove instrument"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleRemoveRow(row.id)}
-                  disabled={rows.length === 1}
-                  className="p-2 rounded-lg text-text-muted hover:text-danger hover:bg-danger-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                  aria-label="Remove instrument"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
 
           <button
