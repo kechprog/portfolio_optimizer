@@ -37,8 +37,29 @@ class ManualAllocator(Allocator):
                 raise ValueError(f"Invalid ticker: {ticker}")
             if not isinstance(weight, (int, float)):
                 raise ValueError(f"Invalid weight for {ticker}: {weight}")
+
+            weight_float = float(weight)
+
+            # Validate weight is in allowed range
+            # Default range is [0, 1], but could be [-1, 1] if shorting is supported
+            # For manual allocator, we'll be conservative and allow [-1, 1] range
+            if weight_float < -1.0 or weight_float > 1.0:
+                raise ValueError(
+                    f"Weight for {ticker} must be between -1 and 1, got {weight_float}"
+                )
+
             # Normalize ticker to uppercase
-            self._allocations[ticker.strip().upper()] = float(weight)
+            self._allocations[ticker.strip().upper()] = weight_float
+
+        # Warn if allocations don't sum to approximately 1.0
+        total_allocation = sum(self._allocations.values())
+        if abs(total_allocation - 1.0) > 0.01:
+            import warnings
+            warnings.warn(
+                f"Allocations sum to {total_allocation:.4f}, which deviates from 1.0 by more than 0.01. "
+                f"This may result in unexpected portfolio behavior.",
+                UserWarning
+            )
 
     @property
     def name(self) -> str:

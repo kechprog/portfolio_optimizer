@@ -377,6 +377,37 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ results, allocators
     return `${value.toFixed(1)}%`;
   };
 
+  // Calculate nice Y-axis domain to avoid malformed values
+  const yAxisDomain = useMemo(() => {
+    if (zoomedData.length === 0) return [0, 10];
+
+    let min = Infinity;
+    let max = -Infinity;
+
+    enabledAllocatorNames.forEach(name => {
+      zoomedData.forEach(point => {
+        const value = point[name];
+        if (typeof value === 'number') {
+          min = Math.min(min, value);
+          max = Math.max(max, value);
+        }
+      });
+    });
+
+    if (min === Infinity || max === -Infinity) return [0, 10];
+
+    // Add 10% padding
+    const range = max - min || 1;
+    const paddedMin = min - range * 0.1;
+    const paddedMax = max + range * 0.1;
+
+    // Round to nice values
+    const niceMin = Math.floor(paddedMin);
+    const niceMax = Math.ceil(paddedMax);
+
+    return [niceMin, niceMax];
+  }, [zoomedData, enabledAllocatorNames]);
+
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       const date = new Date(label);
@@ -460,7 +491,7 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ results, allocators
           </div>
         </div>
       )}
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
         <LineChart
           data={zoomedData}
           margin={{ top: 20, right: 30, left: 10, bottom: 10 }}
@@ -478,6 +509,7 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ results, allocators
             tick={{ fill: 'var(--color-text-muted)' }}
           />
           <YAxis
+            domain={yAxisDomain}
             tickFormatter={formatYAxis}
             stroke="var(--color-text-muted)"
             style={{ fontSize: '12px' }}

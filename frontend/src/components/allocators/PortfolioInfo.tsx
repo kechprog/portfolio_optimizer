@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { Download, Check, TrendingUp, TrendingDown, Activity, BarChart3, RefreshCw, Target, Maximize2, Minimize2 } from 'lucide-react';
-import { Allocator, AllocatorResult } from '../../types';
+import { Allocator, AllocatorResult, PerformanceStats } from '../../types';
 import { getAllocatorName } from '../../mock/data';
 import { useFullscreen } from '../../hooks';
 import {
@@ -44,59 +44,46 @@ interface PortfolioStats {
   rebalances: number;
 }
 
-// Calculate portfolio statistics from performance data
-function calculateStats(result: AllocatorResult): PortfolioStats {
+// Get portfolio statistics from backend-computed stats
+function getStats(result: AllocatorResult): PortfolioStats {
   const { performance, segments } = result;
-  const { dates, cumulative_returns } = performance;
+  const backendStats = performance.stats;
 
-  // Total return (last cumulative return value)
-  const totalReturn = cumulative_returns[cumulative_returns.length - 1] || 0;
-
-  // Calculate daily returns from cumulative returns
-  const dailyReturns: number[] = [];
-  for (let i = 1; i < cumulative_returns.length; i++) {
-    const dailyReturn = cumulative_returns[i] - cumulative_returns[i - 1];
-    dailyReturns.push(dailyReturn);
+  // Use backend-computed stats if available
+  if (backendStats) {
+    return {
+      totalReturn: backendStats.total_return,
+      annualizedReturn: backendStats.annualized_return,
+      volatility: backendStats.volatility,
+      sharpeRatio: backendStats.sharpe_ratio,
+      maxDrawdown: backendStats.max_drawdown,
+      rebalances: segments.length,
+    };
   }
 
-  // Calculate number of trading days
-  const tradingDays = dates.length;
-  const yearsElapsed = tradingDays / 252; // Approximate trading days per year
+  // Fallback to frontend calculation if backend stats not available
+  const { dates, cumulative_returns } = performance;
+  const totalReturn = cumulative_returns[cumulative_returns.length - 1] || 0;
 
-  // Annualized return
+  let yearsElapsed = 0;
+  if (dates.length >= 2) {
+    const startDate = new Date(dates[0]);
+    const endDate = new Date(dates[dates.length - 1]);
+    const msPerDay = 1000 * 60 * 60 * 24;
+    const calendarDays = (endDate.getTime() - startDate.getTime()) / msPerDay;
+    yearsElapsed = calendarDays / 365.25;
+  }
+
   const annualizedReturn = yearsElapsed > 0
     ? (Math.pow(1 + totalReturn / 100, 1 / yearsElapsed) - 1) * 100
     : 0;
 
-  // Volatility (annualized standard deviation)
-  const meanDailyReturn = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length || 0;
-  const variance = dailyReturns.reduce((sum, r) => sum + Math.pow(r - meanDailyReturn, 2), 0) / (dailyReturns.length - 1) || 0;
-  const dailyVolatility = Math.sqrt(variance);
-  const volatility = dailyVolatility * Math.sqrt(252); // Annualize
-
-  // Sharpe Ratio (assuming 4% risk-free rate)
-  const riskFreeRate = 4;
-  const sharpeRatio = volatility > 0 ? (annualizedReturn - riskFreeRate) / volatility : 0;
-
-  // Max Drawdown
-  let maxDrawdown = 0;
-  let peak = cumulative_returns[0];
-  for (const value of cumulative_returns) {
-    if (value > peak) {
-      peak = value;
-    }
-    const drawdown = peak - value;
-    if (drawdown > maxDrawdown) {
-      maxDrawdown = drawdown;
-    }
-  }
-
   return {
     totalReturn,
     annualizedReturn,
-    volatility,
-    sharpeRatio,
-    maxDrawdown,
+    volatility: 0,
+    sharpeRatio: 0,
+    maxDrawdown: 0,
     rebalances: segments.length,
   };
 }
@@ -143,10 +130,10 @@ const PortfolioInfo: React.FC<PortfolioInfoProps> = ({
   const selectedAllocator = allocators.find((a) => a.id === selectedAllocatorId);
   const selectedResult = selectedAllocatorId ? results[selectedAllocatorId] : null;
 
-  // Calculate portfolio statistics
+  // Get portfolio statistics (from backend)
   const stats = useMemo(() => {
     if (!selectedResult) return null;
-    return calculateStats(selectedResult);
+    return getStats(selectedResult);
   }, [selectedResult]);
 
   // Get all unique instruments across all segments
@@ -244,7 +231,7 @@ const PortfolioInfo: React.FC<PortfolioInfoProps> = ({
 
       return { start: newStart, end: newEnd };
     });
-  }, []);
+  }, [zoomRange]);
 
   // Helper to get chart plot area dimensions
   const getChartAreaDimensions = useCallback(() => {
@@ -527,7 +514,17 @@ const PortfolioInfo: React.FC<PortfolioInfoProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full relative">
+      {/* Toast notification for clipboard copy */}
+      {copied && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100]">
+          <div className="bg-green-600 text-white px-4 py-2.5 rounded-lg shadow-xl flex items-center gap-2 border border-green-500">
+            <Check className="w-4 h-4" />
+            <span className="text-sm font-medium">CSV copied to clipboard</span>
+          </div>
+        </div>
+      )}
+
       {/* Header with allocator selection and export */}
       <div className="flex items-center gap-3 mb-4">
         {enabledAllocators.length > 0 ? (
@@ -591,7 +588,7 @@ const PortfolioInfo: React.FC<PortfolioInfoProps> = ({
                   colorClass={getReturnColor(stats.totalReturn)}
                 />
                 <StatCard
-                  label="Annual Return"
+                  label="Annualized Return"
                   value={`${stats.annualizedReturn >= 0 ? '+' : ''}${stats.annualizedReturn.toFixed(2)}%`}
                   icon={<BarChart3 className="w-4 h-4" />}
                   colorClass={getReturnColor(stats.annualizedReturn)}

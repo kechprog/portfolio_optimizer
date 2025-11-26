@@ -159,7 +159,7 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"Error in WebSocket connection {client_id}: {e}")
     finally:
         # Cleanup
-        state.clear()
+        await state.clear()
         logger.debug(f"Cleaned up state for {client_id}")
 
 

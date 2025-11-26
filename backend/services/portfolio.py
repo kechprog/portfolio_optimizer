@@ -4,12 +4,15 @@ Portfolio performance calculation service.
 Computes cumulative returns for a portfolio over time.
 """
 
+import logging
 from datetime import date, timedelta
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 import pandas as pd
 
 from allocators.base import Portfolio, PortfolioSegment, PriceFetcher
+
+logger = logging.getLogger(__name__)
 
 
 async def compute_performance(
@@ -79,8 +82,23 @@ async def compute_performance(
     combined_prices = pd.concat(price_series_list, axis=1)
     combined_prices = combined_prices.sort_index()
 
-    # Forward fill then backward fill missing values
-    combined_prices = combined_prices.ffill().bfill()
+    # Track missing data before filling
+    initial_row_count = len(combined_prices)
+    missing_data_count = combined_prices.isna().sum().sum()
+
+    # Forward fill missing values only (never backward fill to avoid look-ahead bias)
+    combined_prices = combined_prices.ffill()
+
+    # Drop rows that still have NaN values (typically at the beginning before any data exists)
+    combined_prices = combined_prices.dropna()
+
+    # Log warning if significant data was missing or dropped
+    rows_dropped = initial_row_count - len(combined_prices)
+    if rows_dropped > 0:
+        logger.warning(
+            f"Dropped {rows_dropped} rows with missing data at the beginning of the series. "
+            f"Total missing values before fill: {missing_data_count}"
+        )
 
     # Calculate daily returns
     daily_returns = combined_prices.pct_change()
@@ -189,27 +207,46 @@ async def compute_performance_with_segments(
 
 def calculate_metrics(
     cumulative_returns: List[float],
-    dates: Optional[List[str]] = None
+    dates: List[str]
 ) -> Dict[str, Any]:
     """
     Calculates performance metrics from cumulative returns.
 
     Args:
         cumulative_returns: List of cumulative return percentages.
-        dates: Optional list of date strings.
+        dates: List of date strings (ISO format).
 
     Returns:
-        Dictionary with performance metrics.
+        Dictionary with performance metrics:
+            - total_return: Final cumulative return percentage
+            - annualized_return: CAGR (Compound Annual Growth Rate)
+            - volatility: Annualized standard deviation of daily returns
+            - sharpe_ratio: Risk-adjusted return (assumes 4% risk-free rate)
+            - max_drawdown: Maximum peak-to-trough decline
     """
-    if not cumulative_returns:
+    if not cumulative_returns or not dates or len(dates) < 2:
         return {
             "total_return": 0.0,
-            "max_drawdown": 0.0,
-            "volatility": 0.0
+            "annualized_return": 0.0,
+            "volatility": 0.0,
+            "sharpe_ratio": 0.0,
+            "max_drawdown": 0.0
         }
 
     # Total return is the final cumulative return
     total_return = cumulative_returns[-1]
+
+    # Calculate years elapsed using actual calendar days
+    start_date = date.fromisoformat(dates[0])
+    end_date = date.fromisoformat(dates[-1])
+    calendar_days = (end_date - start_date).days
+    years_elapsed = calendar_days / 365.25
+
+    # Annualized return (CAGR formula)
+    if years_elapsed > 0 and total_return > -100:  # Avoid math errors
+        annualized_return = (pow(1 + total_return / 100, 1 / years_elapsed) - 1) * 100
+    else:
+        annualized_return = 0.0
 
     # Calculate max drawdown
     peak = cumulative_returns[0]
@@ -222,34 +259,40 @@ def calculate_metrics(
         if drawdown > max_drawdown:
             max_drawdown = drawdown
 
-    # Calculate volatility (standard deviation of daily returns)
+    # Calculate volatility (annualized standard deviation of daily returns)
+    daily_volatility = 0.0
     if len(cumulative_returns) > 1:
         # Convert cumulative percentage returns to daily returns using geometric calculation
-        # cumulative_returns are percentages, so 5% is stored as 5.0
-        # Convert to factors: 5% -> 1.05
         daily_returns = []
         for i in range(1, len(cumulative_returns)):
             prev_factor = 1.0 + cumulative_returns[i - 1] / 100.0
             curr_factor = 1.0 + cumulative_returns[i] / 100.0
-            # Daily return = (curr_factor / prev_factor) - 1, then convert to percentage
             if prev_factor != 0:
                 daily_ret = ((curr_factor / prev_factor) - 1.0) * 100.0
             else:
                 daily_ret = 0.0
             daily_returns.append(daily_ret)
 
-        # Calculate standard deviation
-        if daily_returns:
+        # Calculate standard deviation (using sample std dev with Bessel's correction)
+        if len(daily_returns) > 1:
             mean = sum(daily_returns) / len(daily_returns)
-            variance = sum((r - mean) ** 2 for r in daily_returns) / len(daily_returns)
-            volatility = variance ** 0.5
-        else:
-            volatility = 0.0
+            variance = sum((r - mean) ** 2 for r in daily_returns) / (len(daily_returns) - 1)
+            daily_volatility = variance ** 0.5
+
+    # Annualize volatility (sqrt(252) for trading days)
+    annualized_volatility = daily_volatility * (252 ** 0.5)
+
+    # Sharpe Ratio (assuming 4% risk-free rate)
+    risk_free_rate = 4.0
+    if annualized_volatility > 0:
+        sharpe_ratio = (annualized_return - risk_free_rate) / annualized_volatility
     else:
-        volatility = 0.0
+        sharpe_ratio = 0.0
 
     return {
         "total_return": round(total_return, 4),
-        "max_drawdown": round(max_drawdown, 4),
-        "volatility": round(volatility, 4)
+        "annualized_return": round(annualized_return, 4),
+        "volatility": round(annualized_volatility, 4),
+        "sharpe_ratio": round(sharpe_ratio, 4),
+        "max_drawdown": round(max_drawdown, 4)
     }

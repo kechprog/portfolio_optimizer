@@ -66,10 +66,20 @@ export interface PortfolioSegment {
   weights: Record<string, number>;
 }
 
+// Performance statistics computed by backend
+export interface PerformanceStats {
+  total_return: number;
+  annualized_return: number;
+  volatility: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
+}
+
 // Performance data
 export interface PerformanceData {
   dates: string[];
   cumulative_returns: number[];
+  stats?: PerformanceStats;
 }
 
 // Allocator result (after computation)

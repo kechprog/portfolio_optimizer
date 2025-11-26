@@ -417,6 +417,12 @@ export const Header: React.FC<HeaderProps> = ({
             <DatePicker
               selected={parseDate(dateRange.fit_start_date)}
               onChange={(date) => date && onDateRangeChange({ ...dateRange, fit_start_date: formatDate(date) })}
+              onMonthChange={(date) => {
+                // Auto-save when month/year changes via header navigation
+                const current = parseDate(dateRange.fit_start_date);
+                const newDate = new Date(date.getFullYear(), date.getMonth(), Math.min(current.getDate(), new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()));
+                onDateRangeChange({ ...dateRange, fit_start_date: formatDate(newDate) });
+              }}
               customInput={<CustomDateInput title="Fit start date" />}
               dateFormat="yyyy-MM-dd"
               popperClassName="date-picker-popper"
@@ -427,6 +433,11 @@ export const Header: React.FC<HeaderProps> = ({
             <DatePicker
               selected={parseDate(dateRange.fit_end_date)}
               onChange={(date) => date && onDateRangeChange({ ...dateRange, fit_end_date: formatDate(date) })}
+              onMonthChange={(date) => {
+                const current = parseDate(dateRange.fit_end_date);
+                const newDate = new Date(date.getFullYear(), date.getMonth(), Math.min(current.getDate(), new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()));
+                onDateRangeChange({ ...dateRange, fit_end_date: formatDate(newDate) });
+              }}
               customInput={<CustomDateInput title="Fit end date" />}
               dateFormat="yyyy-MM-dd"
               popperClassName="date-picker-popper"
@@ -439,6 +450,11 @@ export const Header: React.FC<HeaderProps> = ({
             <DatePicker
               selected={parseDate(dateRange.test_end_date)}
               onChange={(date) => date && onDateRangeChange({ ...dateRange, test_end_date: formatDate(date) })}
+              onMonthChange={(date) => {
+                const current = parseDate(dateRange.test_end_date);
+                const newDate = new Date(date.getFullYear(), date.getMonth(), Math.min(current.getDate(), new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()));
+                onDateRangeChange({ ...dateRange, test_end_date: formatDate(newDate) });
+              }}
               customInput={<CustomDateInput title="Test end date" />}
               dateFormat="yyyy-MM-dd"
               popperClassName="date-picker-popper"

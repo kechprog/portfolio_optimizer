@@ -14,8 +14,44 @@ import {
   MinVolatilityAllocatorConfig,
   ServerMessage,
   ConnectionStatus,
+  ManualAllocator,
+  MaxSharpeAllocator,
+  MinVolatilityAllocator,
 } from './types';
 import { defaultDateRange, getAllocatorName } from './mock/data';
+
+// Type guards for runtime type checking
+function isManualAllocatorConfig(config: unknown): config is ManualAllocatorConfig {
+  if (typeof config !== 'object' || config === null) return false;
+  const c = config as Record<string, unknown>;
+  return (
+    typeof c.name === 'string' &&
+    typeof c.allocations === 'object' &&
+    c.allocations !== null
+  );
+}
+
+function isMaxSharpeAllocatorConfig(config: unknown): config is MaxSharpeAllocatorConfig {
+  if (typeof config !== 'object' || config === null) return false;
+  const c = config as Record<string, unknown>;
+  return (
+    typeof c.name === 'string' &&
+    Array.isArray(c.instruments) &&
+    typeof c.allow_shorting === 'boolean' &&
+    typeof c.use_adj_close === 'boolean'
+  );
+}
+
+function isMinVolatilityAllocatorConfig(config: unknown): config is MinVolatilityAllocatorConfig {
+  if (typeof config !== 'object' || config === null) return false;
+  const c = config as Record<string, unknown>;
+  return (
+    typeof c.name === 'string' &&
+    Array.isArray(c.instruments) &&
+    typeof c.allow_shorting === 'boolean' &&
+    typeof c.use_adj_close === 'boolean'
+  );
+}
 
 function App() {
   // Theme
@@ -65,24 +101,33 @@ function App() {
   ): Allocator => {
     switch (allocatorType) {
       case 'manual':
+        if (!isManualAllocatorConfig(config)) {
+          throw new Error('Invalid manual allocator config received from server');
+        }
         return {
           id,
           type: 'manual',
-          config: config as unknown as ManualAllocatorConfig,
+          config,
           enabled: false,
         };
       case 'max_sharpe':
+        if (!isMaxSharpeAllocatorConfig(config)) {
+          throw new Error('Invalid max sharpe allocator config received from server');
+        }
         return {
           id,
           type: 'max_sharpe',
-          config: config as unknown as MaxSharpeAllocatorConfig,
+          config,
           enabled: false,
         };
       case 'min_volatility':
+        if (!isMinVolatilityAllocatorConfig(config)) {
+          throw new Error('Invalid min volatility allocator config received from server');
+        }
         return {
           id,
           type: 'min_volatility',
-          config: config as unknown as MinVolatilityAllocatorConfig,
+          config,
           enabled: false,
         };
       default:
@@ -109,14 +154,26 @@ function App() {
           // Update allocator config in state
           setAllocators(prev => prev.map(a => {
             if (a.id !== message.id) return a;
-            // Preserve the type when updating config
+            // Preserve the type when updating config - use type guards for safe narrowing
             switch (a.type) {
               case 'manual':
-                return { ...a, config: message.config as unknown as ManualAllocatorConfig };
+                if (!isManualAllocatorConfig(message.config)) {
+                  console.error('Invalid manual allocator config received from server');
+                  return a;
+                }
+                return { ...a, config: message.config };
               case 'max_sharpe':
-                return { ...a, config: message.config as unknown as MaxSharpeAllocatorConfig };
+                if (!isMaxSharpeAllocatorConfig(message.config)) {
+                  console.error('Invalid max sharpe allocator config received from server');
+                  return a;
+                }
+                return { ...a, config: message.config };
               case 'min_volatility':
-                return { ...a, config: message.config as unknown as MinVolatilityAllocatorConfig };
+                if (!isMinVolatilityAllocatorConfig(message.config)) {
+                  console.error('Invalid min volatility allocator config received from server');
+                  return a;
+                }
+                return { ...a, config: message.config };
             }
           }));
           setEditingAllocator(null);

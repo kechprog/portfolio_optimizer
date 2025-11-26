@@ -101,6 +101,13 @@ export interface ResultMessage {
   performance: {
     dates: string[];
     cumulative_returns: number[];
+    stats?: {
+      total_return: number;
+      annualized_return: number;
+      volatility: number;
+      sharpe_ratio: number;
+      max_drawdown: number;
+    };
   };
 }
 

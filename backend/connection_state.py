@@ -5,6 +5,7 @@ Each WebSocket connection has its own ConnectionState instance
 that tracks allocators and caches data for that session.
 """
 
+import asyncio
 import logging
 from typing import Any
 from uuid import uuid4
@@ -25,8 +26,9 @@ class ConnectionState:
         """Initialize empty connection state."""
         self.allocators: dict[str, Any] = {}
         self.matrix_cache: dict[str, Any] = {}
+        self._lock = asyncio.Lock()
 
-    def add_allocator(
+    async def add_allocator(
         self, allocator_type: str, config: dict[str, Any], allocator_instance: Any = None
     ) -> str:
         """
@@ -40,17 +42,18 @@ class ConnectionState:
         Returns:
             The generated unique ID for the allocator.
         """
-        allocator_id = str(uuid4())
-        self.allocators[allocator_id] = {
-            "id": allocator_id,
-            "type": allocator_type,
-            "config": config,
-            "instance": allocator_instance,
-        }
-        logger.debug(f"Added allocator {allocator_id} of type {allocator_type}")
-        return allocator_id
+        async with self._lock:
+            allocator_id = str(uuid4())
+            self.allocators[allocator_id] = {
+                "id": allocator_id,
+                "type": allocator_type,
+                "config": config,
+                "instance": allocator_instance,
+            }
+            logger.debug(f"Added allocator {allocator_id} of type {allocator_type}")
+            return allocator_id
 
-    def update_allocator(
+    async def update_allocator(
         self, allocator_id: str, config: dict[str, Any], allocator_instance: Any = None
     ) -> bool:
         """
@@ -64,17 +67,18 @@ class ConnectionState:
         Returns:
             True if the allocator was found and updated, False otherwise.
         """
-        if allocator_id not in self.allocators:
-            logger.warning(f"Attempted to update non-existent allocator {allocator_id}")
-            return False
+        async with self._lock:
+            if allocator_id not in self.allocators:
+                logger.warning(f"Attempted to update non-existent allocator {allocator_id}")
+                return False
 
-        self.allocators[allocator_id]["config"] = config
-        if allocator_instance is not None:
-            self.allocators[allocator_id]["instance"] = allocator_instance
-        logger.debug(f"Updated allocator {allocator_id}")
-        return True
+            self.allocators[allocator_id]["config"] = config
+            if allocator_instance is not None:
+                self.allocators[allocator_id]["instance"] = allocator_instance
+            logger.debug(f"Updated allocator {allocator_id}")
+            return True
 
-    def delete_allocator(self, allocator_id: str) -> bool:
+    async def delete_allocator(self, allocator_id: str) -> bool:
         """
         Delete an allocator from the connection state.
 
@@ -84,13 +88,14 @@ class ConnectionState:
         Returns:
             True if the allocator was found and deleted, False otherwise.
         """
-        if allocator_id not in self.allocators:
-            logger.warning(f"Attempted to delete non-existent allocator {allocator_id}")
-            return False
+        async with self._lock:
+            if allocator_id not in self.allocators:
+                logger.warning(f"Attempted to delete non-existent allocator {allocator_id}")
+                return False
 
-        del self.allocators[allocator_id]
-        logger.debug(f"Deleted allocator {allocator_id}")
-        return True
+            del self.allocators[allocator_id]
+            logger.debug(f"Deleted allocator {allocator_id}")
+            return True
 
     def get_allocator(self, allocator_id: str) -> dict[str, Any] | None:
         """
@@ -148,8 +153,9 @@ class ConnectionState:
         self.matrix_cache.clear()
         logger.debug("Cleared matrix cache")
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """Clear all state (allocators and cache)."""
-        self.allocators.clear()
-        self.matrix_cache.clear()
-        logger.debug("Cleared all connection state")
+        async with self._lock:
+            self.allocators.clear()
+            self.matrix_cache.clear()
+            logger.debug("Cleared all connection state")

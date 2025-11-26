@@ -29,7 +29,7 @@ from schemas import (
     Result,
     UpdateAllocator,
 )
-from services.portfolio import compute_performance
+from services.portfolio import calculate_metrics, compute_performance
 from services.price_fetcher import get_price_data
 
 logger = logging.getLogger(__name__)
@@ -133,7 +133,7 @@ async def handle_create_allocator(
         )
 
         # Store both the config and the instance
-        allocator_id = state.add_allocator(
+        allocator_id = await state.add_allocator(
             allocator_type=message.allocator_type,
             config=message.config,
             allocator_instance=allocator_instance,
@@ -181,7 +181,7 @@ async def handle_update_allocator(
         allocator_instance = create_allocator_instance(allocator_type, message.config)
 
         # Update the stored state with the new config and instance
-        if state.update_allocator(
+        if await state.update_allocator(
             message.id, message.config, allocator_instance=allocator_instance
         ):
             response = AllocatorUpdated(
@@ -219,7 +219,7 @@ async def handle_delete_allocator(
         message: The delete allocator message.
     """
     try:
-        if state.delete_allocator(message.id):
+        if await state.delete_allocator(message.id):
             response = AllocatorDeleted(id=message.id)
             await send_message(websocket, response)
             logger.info(f"Deleted allocator {message.id}")
@@ -355,6 +355,13 @@ async def handle_compute_portfolio(
             include_dividends=message.include_dividends,
             price_fetcher=price_fetcher,
         )
+
+        # Calculate and add statistics to performance
+        stats = calculate_metrics(
+            cumulative_returns=performance.get("cumulative_returns", []),
+            dates=performance.get("dates", [])
+        )
+        performance["stats"] = stats
 
         await progress_callback("Computation complete", 4, 4)
 

@@ -54,6 +54,8 @@ export class WebSocketService {
     this.clearReconnectTimeout();
 
     if (this.ws) {
+      // Clear all event handlers before closing to prevent memory leaks
+      this.clearEventHandlers();
       this.ws.close(1000, 'Client disconnect');
       this.ws = null;
     }
@@ -92,10 +94,25 @@ export class WebSocketService {
   private setupEventHandlers(): void {
     if (!this.ws) return;
 
+    // Clear any existing handlers first to prevent memory leaks on reconnect
+    this.clearEventHandlers();
+
     this.ws.onopen = this.handleOpen.bind(this);
     this.ws.onclose = this.handleClose.bind(this);
     this.ws.onerror = this.handleError.bind(this);
     this.ws.onmessage = this.handleMessage.bind(this);
+  }
+
+  /**
+   * Clear all WebSocket event handlers
+   */
+  private clearEventHandlers(): void {
+    if (!this.ws) return;
+
+    this.ws.onopen = null;
+    this.ws.onclose = null;
+    this.ws.onerror = null;
+    this.ws.onmessage = null;
   }
 
   /**
