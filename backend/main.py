@@ -7,16 +7,21 @@ for portfolio optimization computations.
 
 import json
 import logging
+import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Union
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from config import WS_HOST, WS_PORT, CORS_ORIGINS
 from connection_state import ConnectionState
+from db import init_db, close_db, get_database_url, async_session_maker
+from db.crud import create_user, delete_user, update_user_activity
 from message_handlers import MESSAGE_HANDLERS
 from schemas import (
     ComputePortfolio,
@@ -39,8 +44,28 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     logger.info(f"Starting Portfolio Optimizer WebSocket server on {WS_HOST}:{WS_PORT}")
+
+    # Initialize database
+    try:
+        await init_db()
+        logger.info("Database initialized successfully (PostgreSQL)")
+        # Mask password in log for security
+        db_url = get_database_url()
+        masked_url = db_url.split('@')[0].rsplit(':', 1)[0] + ':***@' + db_url.split('@')[1] if '@' in db_url else db_url
+        logger.info(f"Connected to: {masked_url}")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        raise
+
     yield
+
+    # Close database connection
     logger.info("Shutting down Portfolio Optimizer WebSocket server")
+    try:
+        await close_db()
+        logger.info("Database connection closed")
+    except Exception as e:
+        logger.error(f"Error closing database: {e}")
 
 
 # Create FastAPI app
@@ -104,8 +129,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
     Handles the connection lifecycle:
     1. Accept connection and create state
-    2. Process messages in a loop
-    3. Clean up on disconnect
+    2. Track user connection in database
+    3. Process messages in a loop
+    4. Clean up on disconnect
     """
     await websocket.accept()
     state = ConnectionState()
@@ -115,12 +141,34 @@ async def websocket_endpoint(websocket: WebSocket):
     client_port = websocket.client.port if websocket.client else "unknown"
     client_id = f"{client_host}:{client_port}"
 
-    logger.info(f"Client connected: {client_id}")
+    # Generate unique session ID for this connection
+    session_id = str(uuid.uuid4())
+
+    logger.info(f"Client connected: {client_id} (session: {session_id})")
+
+    # Track user connection in database
+    try:
+        async with async_session_maker() as db_session:
+            await create_user(db_session, session_id)
+            await db_session.commit()
+            logger.debug(f"Created user record for session: {session_id}")
+    except Exception as db_error:
+        logger.warning(f"Failed to create user record in database: {db_error}")
+        # Continue execution even if database tracking fails
 
     try:
         while True:
             # Receive raw JSON text
             raw_text = await websocket.receive_text()
+
+            # Update user activity in database
+            try:
+                async with async_session_maker() as db_session:
+                    await update_user_activity(db_session, session_id)
+                    await db_session.commit()
+            except Exception as db_error:
+                logger.debug(f"Failed to update user activity: {db_error}")
+                # Continue execution even if database tracking fails
 
             try:
                 # Parse JSON
@@ -160,11 +208,25 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.error(f"Error in WebSocket connection {client_id}: {e}")
     finally:
-        # Cleanup
+        # Cleanup connection state
         try:
             await state.clear()
         except Exception as cleanup_error:
             logger.error(f"Error during cleanup: {cleanup_error}")
+
+        # Delete user record from database
+        try:
+            async with async_session_maker() as db_session:
+                deleted = await delete_user(db_session, session_id)
+                await db_session.commit()
+                if deleted:
+                    logger.debug(f"Deleted user record for session: {session_id}")
+                else:
+                    logger.debug(f"User record not found for session: {session_id}")
+        except Exception as db_error:
+            logger.warning(f"Failed to delete user record from database: {db_error}")
+
+        # Close WebSocket connection
         try:
             await websocket.close()
         except Exception:
@@ -176,6 +238,12 @@ async def websocket_endpoint(websocket: WebSocket):
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+# Serve frontend static files at root (must be last to not override API routes)
+STATIC_DIR = Path(__file__).parent / "static"
+if STATIC_DIR.exists():
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 
 if __name__ == "__main__":
