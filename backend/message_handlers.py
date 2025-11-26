@@ -10,6 +10,7 @@ from datetime import date
 from typing import Any, Dict, Type
 
 from fastapi import WebSocket
+from starlette.websockets import WebSocketState
 
 from allocators.base import Allocator, Portfolio
 from allocators.manual import ManualAllocator
@@ -113,6 +114,8 @@ async def send_message(websocket: WebSocket, message: Any) -> None:
         websocket: The WebSocket connection.
         message: A Pydantic model to serialize and send.
     """
+    if websocket.client_state != WebSocketState.CONNECTED:
+        return
     await websocket.send_json(message.model_dump())
 
 

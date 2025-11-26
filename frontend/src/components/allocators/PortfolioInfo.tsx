@@ -397,11 +397,13 @@ const PortfolioInfo: React.FC<PortfolioInfoProps> = ({
       }
     };
 
-    if (isPanning || isSelecting) {
-      window.addEventListener('mouseup', handleGlobalMouseUp);
-      return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
-    }
-  }, [isPanning, isSelecting]);
+    // Always add listener when component is in interactive state
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+
+    return () => {
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+    };
+  }, []); // Empty deps - listener is always active, handler updates via closure
 
   // Calculate selection data for display
   const selectionData = useMemo(() => {

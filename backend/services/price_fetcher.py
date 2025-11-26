@@ -18,6 +18,12 @@ from database import (
 
 logger = logging.getLogger(__name__)
 
+# Module-level shared HTTP session for connection pooling
+_http_session: Optional[aiohttp.ClientSession] = None
+
+# Module-level per-ticker locks to prevent race conditions
+_ticker_locks: Dict[str, asyncio.Lock] = {}
+
 
 class PriceFetcherError(Exception):
     """Base exception for price fetcher errors."""
@@ -42,6 +48,46 @@ class InvalidTickerError(PriceFetcherError):
 class CacheDateRangeError(PriceFetcherError):
     """Requested start_date is before cached first_date."""
     pass
+
+
+def get_ticker_lock(ticker: str) -> asyncio.Lock:
+    """
+    Get or create a lock for a specific ticker to prevent race conditions.
+
+    Args:
+        ticker: The stock ticker symbol
+
+    Returns:
+        asyncio.Lock for the ticker
+    """
+    if ticker not in _ticker_locks:
+        _ticker_locks[ticker] = asyncio.Lock()
+    return _ticker_locks[ticker]
+
+
+async def get_http_session() -> aiohttp.ClientSession:
+    """
+    Get or create the shared HTTP session for connection pooling.
+
+    Returns:
+        Shared aiohttp.ClientSession instance
+    """
+    global _http_session
+    if _http_session is None or _http_session.closed:
+        timeout = aiohttp.ClientTimeout(total=30)
+        _http_session = aiohttp.ClientSession(timeout=timeout)
+    return _http_session
+
+
+async def close_http_session() -> None:
+    """
+    Close the shared HTTP session.
+    Should be called on application shutdown.
+    """
+    global _http_session
+    if _http_session is not None and not _http_session.closed:
+        await _http_session.close()
+        _http_session = None
 
 
 async def fetch_from_alpha_vantage(ticker: str) -> Dict[str, Any]:
@@ -73,36 +119,34 @@ async def fetch_from_alpha_vantage(ticker: str) -> Dict[str, Any]:
 
     logger.info(f"Fetching data for {ticker} from Alpha Vantage API...")
 
-    timeout = aiohttp.ClientTimeout(total=30)
-
     try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url, params=params) as response:
-                if response.status != 200:
-                    raise APIError(f"HTTP {response.status}: Failed to fetch data for {ticker}")
+        session = await get_http_session()
+        async with session.get(url, params=params) as response:
+            if response.status != 200:
+                raise APIError(f"HTTP {response.status}: Failed to fetch data for {ticker}")
 
-                data = await response.json()
+            data = await response.json()
 
-                # Check for API error messages
-                if "Error Message" in data:
-                    raise InvalidTickerError(f"Invalid ticker '{ticker}': {data['Error Message']}")
+            # Check for API error messages
+            if "Error Message" in data:
+                raise InvalidTickerError(f"Invalid ticker '{ticker}': {data['Error Message']}")
 
-                if "Note" in data:
-                    raise RateLimitError(f"API rate limit exceeded: {data['Note']}")
+            if "Note" in data:
+                raise RateLimitError(f"API rate limit exceeded: {data['Note']}")
 
-                if "Information" in data:
-                    # This can also indicate rate limiting
-                    raise RateLimitError(f"API information: {data['Information']}")
+            if "Information" in data:
+                # This can also indicate rate limiting
+                raise RateLimitError(f"API information: {data['Information']}")
 
-                # Extract time series data
-                time_series_key = "Time Series (Daily)"
-                if time_series_key not in data:
-                    raise APIError(f"No time series data found for {ticker}. Response: {list(data.keys())}")
+            # Extract time series data
+            time_series_key = "Time Series (Daily)"
+            if time_series_key not in data:
+                raise APIError(f"No time series data found for {ticker}. Response: {list(data.keys())}")
 
-                time_series = data[time_series_key]
-                logger.info(f"Successfully fetched {len(time_series)} days of data for {ticker}")
+            time_series = data[time_series_key]
+            logger.info(f"Successfully fetched {len(time_series)} days of data for {ticker}")
 
-                return time_series
+            return time_series
 
     except asyncio.TimeoutError:
         raise APIError(f"Request timed out for {ticker}")
@@ -203,54 +247,61 @@ async def get_price_data(
     # Ensure database is initialized
     await init_database()
 
-    # Check cache
-    cached = await get_cached_price_data(ticker)
+    # Acquire per-ticker lock to prevent race conditions
+    lock = get_ticker_lock(ticker)
+    async with lock:
+        # Check cache
+        cached = await get_cached_price_data(ticker)
 
-    if cached is None:
-        # Not in cache - fetch all data
-        logger.info(f"Cache miss for {ticker}, fetching from API...")
-        time_series = await fetch_from_alpha_vantage(ticker)
+        if cached is None:
+            # Not in cache - fetch all data
+            logger.info(f"Cache miss for {ticker}, fetching from API...")
+            time_series = await fetch_from_alpha_vantage(ticker)
 
-        # Determine date range from fetched data
-        dates = sorted(time_series.keys())
-        first_date_fetched = datetime.strptime(dates[0], '%Y-%m-%d').date()
-        last_date_fetched = datetime.strptime(dates[-1], '%Y-%m-%d').date()
+            # Determine date range from fetched data
+            dates = sorted(time_series.keys())
+            if not dates:
+                raise APIError(f"No price data available for {ticker}")
+            first_date_fetched = datetime.strptime(dates[0], '%Y-%m-%d').date()
+            last_date_fetched = datetime.strptime(dates[-1], '%Y-%m-%d').date()
 
-        # Store in cache
-        await store_price_data(ticker, time_series, first_date_fetched, last_date_fetched)
+            # Store in cache
+            await store_price_data(ticker, time_series, first_date_fetched, last_date_fetched)
 
-        # Convert to DataFrame and filter
-        df = parse_time_series_to_dataframe(time_series)
+            # Convert to DataFrame and filter
+            df = parse_time_series_to_dataframe(time_series)
+            return filter_dataframe_by_date(df, start_date, end_date)
+
+        # Check if we need to refetch (end_date is after cached data)
+        if end_date > cached['last_date']:
+            logger.info(f"Cache stale for {ticker} (cached until {cached['last_date']}, need {end_date}), refetching...")
+            time_series = await fetch_from_alpha_vantage(ticker)
+
+            # Determine date range from fetched data
+            dates = sorted(time_series.keys())
+            if not dates:
+                raise APIError(f"No price data available for {ticker}")
+            first_date_fetched = datetime.strptime(dates[0], '%Y-%m-%d').date()
+            last_date_fetched = datetime.strptime(dates[-1], '%Y-%m-%d').date()
+
+            # Overwrite cache
+            await store_price_data(ticker, time_series, first_date_fetched, last_date_fetched)
+
+            # Convert to DataFrame and filter
+            df = parse_time_series_to_dataframe(time_series)
+            return filter_dataframe_by_date(df, start_date, end_date)
+
+        # Check if start_date is before cached first_date
+        if start_date < cached['first_date']:
+            raise CacheDateRangeError(
+                f"Requested start_date ({start_date}) is before cached first_date ({cached['first_date']}) for {ticker}. "
+                f"The Alpha Vantage API returns all available history, so data before {cached['first_date']} does not exist."
+            )
+
+        # Cache hit - use cached data
+        logger.debug(f"Cache hit for {ticker} ({cached['first_date']} to {cached['last_date']})")
+        df = parse_time_series_to_dataframe(cached['data'])
         return filter_dataframe_by_date(df, start_date, end_date)
-
-    # Check if we need to refetch (end_date is after cached data)
-    if end_date > cached['last_date']:
-        logger.info(f"Cache stale for {ticker} (cached until {cached['last_date']}, need {end_date}), refetching...")
-        time_series = await fetch_from_alpha_vantage(ticker)
-
-        # Determine date range from fetched data
-        dates = sorted(time_series.keys())
-        first_date_fetched = datetime.strptime(dates[0], '%Y-%m-%d').date()
-        last_date_fetched = datetime.strptime(dates[-1], '%Y-%m-%d').date()
-
-        # Overwrite cache
-        await store_price_data(ticker, time_series, first_date_fetched, last_date_fetched)
-
-        # Convert to DataFrame and filter
-        df = parse_time_series_to_dataframe(time_series)
-        return filter_dataframe_by_date(df, start_date, end_date)
-
-    # Check if start_date is before cached first_date
-    if start_date < cached['first_date']:
-        raise CacheDateRangeError(
-            f"Requested start_date ({start_date}) is before cached first_date ({cached['first_date']}) for {ticker}. "
-            f"The Alpha Vantage API returns all available history, so data before {cached['first_date']} does not exist."
-        )
-
-    # Cache hit - use cached data
-    logger.debug(f"Cache hit for {ticker} ({cached['first_date']} to {cached['last_date']})")
-    df = parse_time_series_to_dataframe(cached['data'])
-    return filter_dataframe_by_date(df, start_date, end_date)
 
 
 async def get_multiple_price_data(

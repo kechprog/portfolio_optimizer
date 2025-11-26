@@ -135,6 +135,7 @@ export class WebSocketService {
     this.setStatus('connected');
     this.reconnectAttempts = 0;
     this.isCleanClose = false;
+    this.isReconnecting = false;
   }
 
   /**
@@ -157,6 +158,7 @@ export class WebSocketService {
    */
   private handleError(event: Event): void {
     this.onError(event);
+    this.isReconnecting = false;
 
     // Trigger reconnection on error if not already reconnecting
     if (this.status !== 'reconnecting' && !this.isReconnecting) {
@@ -173,8 +175,11 @@ export class WebSocketService {
       this.onMessage(message);
     } catch (error) {
       console.error('Failed to parse WebSocket message:', error);
-      // Still call onMessage with raw data if JSON parsing fails
-      this.onMessage(event.data);
+      // Create an error message object instead of passing raw string
+      this.onMessage({
+        type: 'error',
+        message: 'Invalid JSON received from server'
+      });
     }
   }
 
@@ -223,7 +228,6 @@ export class WebSocketService {
     );
 
     this.reconnectTimeoutId = window.setTimeout(() => {
-      this.isReconnecting = false;
       this.connect();
     }, delay);
   }

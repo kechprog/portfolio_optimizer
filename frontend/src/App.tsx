@@ -90,6 +90,9 @@ function App() {
   // Track enabled state locally (server doesn't track this)
   const [enabledIds, setEnabledIds] = useState<Set<string>>(new Set());
 
+  // Ref to track latest allocatorsWithEnabled to avoid stale closures
+  const allocatorsRef = useRef<Allocator[]>([]);
+
   // Modal state
   const [editingAllocator, setEditingAllocator] = useState<Allocator | null>(null);
   const [creatingAllocatorType, setCreatingAllocatorType] = useState<AllocatorType | null>(null);
@@ -195,7 +198,11 @@ function App() {
 
   // Set up WebSocket message handler
   useEffect(() => {
+    let isActive = true;
+
     setMessageHandler((message: ServerMessage) => {
+      if (!isActive) return; // Prevent processing after unmount
+
       switch (message.type) {
         case 'allocator_created': {
           // Add the new allocator to state with server-assigned ID
@@ -307,6 +314,12 @@ function App() {
         }
       }
     });
+
+    // Cleanup function to prevent processing messages after unmount
+    return () => {
+      isActive = false;
+      setMessageHandler(() => {});
+    };
   }, [setMessageHandler, createTypedAllocatorCallback, cleanupPendingCompute]);
 
   // Cleanup pending computes on unmount
@@ -324,6 +337,11 @@ function App() {
     ...a,
     enabled: enabledIds.has(a.id),
   })), [allocators, enabledIds]);
+
+  // Update ref when allocatorsWithEnabled changes to avoid stale closures
+  useEffect(() => {
+    allocatorsRef.current = allocatorsWithEnabled;
+  }, [allocatorsWithEnabled]);
 
   // Allocator CRUD operations
   const handleToggleAllocator = useCallback((id: string) => {
@@ -371,14 +389,27 @@ function App() {
 
   const confirmDeleteAllocator = useCallback(() => {
     if (deletingAllocator) {
+      const deletedId = deletingAllocator.id;
+
       // Send to server - allocator_deleted message will remove from state
-      wsDeleteAllocator(deletingAllocator.id);
-      if (selectedAllocatorId === deletingAllocator.id) {
-        setSelectedAllocatorId(allocators.find(a => a.id !== deletingAllocator.id)?.id || null);
+      wsDeleteAllocator(deletedId);
+
+      // Use functional form to get fresh state when checking if we need to change selection
+      if (selectedAllocatorId === deletedId) {
+        setSelectedAllocatorId(prev => {
+          // Get fresh allocators from state at time of execution
+          setAllocators(currentAllocators => {
+            const remaining = currentAllocators.find(a => a.id !== deletedId);
+            // Use setTimeout to update selection after state has settled
+            setTimeout(() => setSelectedAllocatorId(remaining?.id || null), 0);
+            return currentAllocators;
+          });
+          return prev;
+        });
       }
       setDeletingAllocator(null);
     }
-  }, [deletingAllocator, selectedAllocatorId, allocators, wsDeleteAllocator]);
+  }, [deletingAllocator, selectedAllocatorId, wsDeleteAllocator]);
 
   const handleCreateAllocator = useCallback((type: AllocatorType) => {
     setCreatingAllocatorType(type);
@@ -411,7 +442,8 @@ function App() {
 
   // Compute portfolios via WebSocket
   const handleCompute = useCallback(async () => {
-    const enabledAllocators = allocatorsWithEnabled.filter(a => a.enabled);
+    // Use ref to get latest allocators and avoid stale closure
+    const enabledAllocators = allocatorsRef.current.filter(a => a.enabled);
     if (enabledAllocators.length === 0) return;
     if (status !== 'connected') {
       console.error('WebSocket not connected');
@@ -444,7 +476,7 @@ function App() {
       pendingTimeoutsRef.current.set(allocator.id, timeoutId);
       wsCompute(allocator.id, dateRange, includeDividends);
     }
-  }, [allocatorsWithEnabled, dateRange, includeDividends, status, wsCompute, cleanupPendingCompute]);
+  }, [dateRange, includeDividends, status, wsCompute, cleanupPendingCompute]);
 
   // Close modals
   const closeManualModal = () => {

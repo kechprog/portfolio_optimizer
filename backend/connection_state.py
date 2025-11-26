@@ -106,20 +106,20 @@ class ConnectionState:
             allocator_id: ID of the allocator to retrieve.
 
         Returns:
-            A deep copy of the allocator dictionary if found, None otherwise.
-            Returns a copy to prevent mutation of internal state.
+            The allocator dictionary if found, None otherwise.
+            Note: Returns the actual instance reference to avoid deep copy overhead.
         """
         async with self._lock:
             allocator = self.allocators.get(allocator_id)
-            return copy.deepcopy(allocator) if allocator is not None else None
+            return allocator
 
     async def list_allocators(self) -> list[dict[str, Any]]:
         """
         List all allocators in the connection state.
 
         Returns:
-            A deep copy of allocator dictionaries (without instance objects).
-            Returns a copy to prevent mutation of internal state.
+            A list of allocator dictionaries (without instance objects).
+            The list comprehension creates new dicts, so no deep copy needed.
         """
         async with self._lock:
             allocators = [
@@ -130,7 +130,7 @@ class ConnectionState:
                 }
                 for alloc in self.allocators.values()
             ]
-            return copy.deepcopy(allocators)
+            return allocators
 
     async def get_matrix_cache(self, cache_key: str) -> Any | None:
         """

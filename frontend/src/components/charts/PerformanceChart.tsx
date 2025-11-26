@@ -322,11 +322,13 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ results, allocators
       handleGlobalMouseUpRef.current(e);
     };
 
-    if (isPanning || isSelecting) {
-      window.addEventListener('mouseup', handleMouseUp);
-      return () => window.removeEventListener('mouseup', handleMouseUp);
-    }
-  }, [isPanning, isSelecting]);
+    // Always add listener when component is in interactive state
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []); // Empty deps - listener is always active, handler ref updates
 
   // Calculate selection data for display
   const selectionData = useMemo(() => {

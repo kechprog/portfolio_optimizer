@@ -38,6 +38,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
   // Refs
   const wsServiceRef = useRef<WebSocketService | null>(null);
   const messageHandlerRef = useRef<((message: ServerMessage) => void) | null>(null);
+  const messageQueueRef = useRef<ServerMessage[]>([]);
 
   // Initialize WebSocketService
   useEffect(() => {
@@ -61,9 +62,12 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
           setError(message.message);
         }
 
-        // Call the user-provided message handler
+        // Call the user-provided message handler if set, otherwise queue the message
         if (messageHandlerRef.current) {
           messageHandlerRef.current(message);
+        } else {
+          // Queue messages received before handler is registered
+          messageQueueRef.current.push(message);
         }
       },
       onError: (errorEvent) => {
@@ -85,6 +89,8 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
         wsServiceRef.current.disconnect();
         wsServiceRef.current = null;
       }
+      messageHandlerRef.current = null;
+      messageQueueRef.current = [];
     };
   }, [url, autoConnect]);
 
@@ -100,6 +106,13 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
   // Message handler registration
   const setMessageHandler = useCallback((handler: (message: ServerMessage) => void) => {
     messageHandlerRef.current = handler;
+
+    // Process any queued messages that arrived before the handler was set
+    if (messageQueueRef.current.length > 0) {
+      const queuedMessages = [...messageQueueRef.current];
+      messageQueueRef.current = [];
+      queuedMessages.forEach(message => handler(message));
+    }
   }, []);
 
   // Allocator management methods

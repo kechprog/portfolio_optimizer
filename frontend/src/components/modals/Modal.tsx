@@ -1,6 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 
+// Track how many modals are currently open to prevent overflow corruption
+let openModalCount = 0;
+
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -54,7 +57,12 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, 
       // Add event listeners
       document.addEventListener('keydown', handleEscape);
       document.addEventListener('keydown', handleTab);
-      document.body.style.overflow = 'hidden';
+
+      // Increment counter and only set overflow if this is the first modal
+      openModalCount++;
+      if (openModalCount === 1) {
+        document.body.style.overflow = 'hidden';
+      }
 
       // Focus the modal after a brief delay to ensure it's rendered
       setTimeout(() => {
@@ -75,11 +83,24 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, 
     return () => {
       document.removeEventListener('keydown', handleEscape);
       document.removeEventListener('keydown', handleTab);
-      document.body.style.overflow = 'unset';
+
+      // Decrement counter and only unset overflow if no modals remain
+      openModalCount--;
+      if (openModalCount === 0) {
+        document.body.style.overflow = 'unset';
+      }
 
       // Restore focus to the previously focused element
       if (!isOpen && previousActiveElementRef.current) {
-        previousActiveElementRef.current.focus();
+        // Check if the element is still in the DOM before focusing
+        if (document.body.contains(previousActiveElementRef.current)) {
+          try {
+            previousActiveElementRef.current.focus();
+          } catch (error) {
+            // Silently fail if focus() throws an error
+            console.warn('Failed to restore focus:', error);
+          }
+        }
       }
     };
   }, [isOpen, onClose]);
