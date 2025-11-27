@@ -12,6 +12,7 @@ from .crud import (
     update_user_activity,
     delete_user,
     get_all_active_users,
+    get_users_by_auth0_id,
 )
 from .engine import (
     engine,
@@ -32,6 +33,7 @@ __all__ = [
     "update_user_activity",
     "delete_user",
     "get_all_active_users",
+    "get_users_by_auth0_id",
     # Database engine and session
     "engine",
     "async_session_maker",

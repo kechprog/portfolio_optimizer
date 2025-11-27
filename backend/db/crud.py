@@ -13,24 +13,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .models import User
 
 
-async def create_user(session: AsyncSession, session_id: str) -> User:
+async def create_user(
+    session: AsyncSession, session_id: str, auth0_user_id: str | None = None
+) -> User:
     """
     Create a new user with the given session ID.
 
     Args:
         session: SQLAlchemy async session
         session_id: WebSocket connection ID
+        auth0_user_id: Optional Auth0 user identifier
 
     Returns:
         Created User instance
 
     Example:
         async with async_session() as session:
-            user = await create_user(session, "ws-conn-123")
+            user = await create_user(session, "ws-conn-123", "auth0|123456")
             await session.commit()
     """
     user = User(
         session_id=session_id,
+        auth0_user_id=auth0_user_id,
         connected_at=datetime.now(timezone.utc),
         last_active_at=datetime.now(timezone.utc),
     )
@@ -131,5 +135,28 @@ async def get_all_active_users(session: AsyncSession) -> List[User]:
                 print(f"  - {user.session_id} (connected at {user.connected_at})")
     """
     stmt = select(User).order_by(User.connected_at.desc())
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_users_by_auth0_id(
+    session: AsyncSession, auth0_user_id: str
+) -> List[User]:
+    """
+    Retrieve all users associated with a specific Auth0 user ID.
+
+    Args:
+        session: SQLAlchemy async session
+        auth0_user_id: Auth0 user identifier
+
+    Returns:
+        List of User instances matching the Auth0 user ID
+
+    Example:
+        async with async_session() as session:
+            users = await get_users_by_auth0_id(session, "auth0|123456")
+            print(f"Found {len(users)} users for Auth0 ID")
+    """
+    stmt = select(User).where(User.auth0_user_id == auth0_user_id)
     result = await session.execute(stmt)
     return list(result.scalars().all())

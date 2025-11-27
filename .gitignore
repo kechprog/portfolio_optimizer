@@ -1,8 +1,21 @@
 .claude
-backend/__pycache__
-backend/allocators/__pycache__
-backend/services/__pycache__
-backend/__pycache__
+.playwright-mcp/
+
+# Python
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Backend
 backend/.env
 backend/price_cache.db
 backend/static/
+
+# Frontend
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# Misc
+nul
+**/nul

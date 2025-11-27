@@ -13,11 +13,13 @@ from pathlib import Path
 from typing import Union
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
+from starlette import status
 
+from auth import validate_token, AuthError, TokenPayload, is_auth_configured
 from config import WS_HOST, WS_PORT, CORS_ORIGINS
 from connection_state import ConnectionState
 from db import init_db, close_db, get_database_url, async_session_maker
@@ -123,33 +125,57 @@ def parse_message(
 
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    token: str = Query(None, description="Auth0 JWT token")
+):
     """
     Main WebSocket endpoint.
 
     Handles the connection lifecycle:
-    1. Accept connection and create state
-    2. Track user connection in database
-    3. Process messages in a loop
-    4. Clean up on disconnect
+    1. Authenticate user (if Auth0 is configured)
+    2. Accept connection and create state
+    3. Track user connection in database
+    4. Process messages in a loop
+    5. Clean up on disconnect
     """
-    await websocket.accept()
-    state = ConnectionState()
-
     # Get client info for logging
     client_host = websocket.client.host if websocket.client else "unknown"
     client_port = websocket.client.port if websocket.client else "unknown"
     client_id = f"{client_host}:{client_port}"
 
+    # Authenticate user before accepting connection
+    auth0_user_id = None
+    if is_auth_configured():
+        if not token:
+            logger.warning(f"Authentication required but no token provided from {client_id}")
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Authentication required")
+            return
+
+        try:
+            payload: TokenPayload = await validate_token(token)
+            auth0_user_id = payload.sub
+            logger.debug(f"Authenticated user: {auth0_user_id}")
+        except AuthError as e:
+            logger.warning(f"Authentication failed for {client_id}: {e.error}")
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=e.error)
+            return
+    else:
+        logger.debug("Auth0 not configured, allowing anonymous connection")
+
+    # Accept WebSocket connection after successful authentication
+    await websocket.accept()
+    state = ConnectionState()
+
     # Generate unique session ID for this connection
     session_id = str(uuid.uuid4())
 
-    logger.info(f"Client connected: {client_id} (session: {session_id})")
+    logger.info(f"Client connected: {client_id} (session: {session_id}, user: {auth0_user_id or 'anonymous'})")
 
     # Track user connection in database
     try:
         async with async_session_maker() as db_session:
-            await create_user(db_session, session_id)
+            await create_user(db_session, session_id, auth0_user_id)
             await db_session.commit()
             logger.debug(f"Created user record for session: {session_id}")
     except Exception as db_error:

@@ -115,6 +115,7 @@ async def send_message(websocket: WebSocket, message: Any) -> None:
         message: A Pydantic model to serialize and send.
     """
     if websocket.client_state != WebSocketState.CONNECTED:
+        logger.warning(f"Cannot send message, WebSocket not connected: {websocket.client_state}")
         return
     await websocket.send_json(message.model_dump())
 

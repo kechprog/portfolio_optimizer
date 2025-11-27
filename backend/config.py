@@ -36,3 +36,9 @@ else:
         "http://localhost:5175",
         "http://localhost:5176",
     ]
+
+# Auth0 Configuration
+AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN", "")
+AUTH0_AUDIENCE = os.getenv("AUTH0_AUDIENCE", "")
+AUTH0_ISSUER = f"https://{AUTH0_DOMAIN}/" if AUTH0_DOMAIN else ""
+AUTH0_JWKS_URL = f"https://{AUTH0_DOMAIN}/.well-known/jwks.json" if AUTH0_DOMAIN else ""

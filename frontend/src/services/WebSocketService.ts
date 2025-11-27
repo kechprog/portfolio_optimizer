@@ -2,6 +2,7 @@ import { ConnectionStatus } from '../types/websocket';
 
 export interface WebSocketServiceConfig {
   url: string;
+  token?: string;
   onStatusChange: (status: ConnectionStatus) => void;
   onMessage: (message: any) => void;
   onError: (error: Event | Error) => void;
@@ -17,12 +18,14 @@ export class WebSocketService {
   private isReconnecting: boolean = false;
 
   private readonly url: string;
+  private token?: string;
   private readonly onStatusChange: (status: ConnectionStatus) => void;
   private readonly onMessage: (message: any) => void;
   private readonly onError: (error: Event | Error) => void;
 
   constructor(config: WebSocketServiceConfig) {
     this.url = config.url;
+    this.token = config.token;
     this.onStatusChange = config.onStatusChange;
     this.onMessage = config.onMessage;
     this.onError = config.onError;
@@ -51,7 +54,13 @@ export class WebSocketService {
     this.setStatus('connecting');
 
     try {
-      this.ws = new WebSocket(this.url);
+      // Append token to URL if provided
+      let connectUrl = this.url;
+      if (this.token) {
+        const separator = this.url.includes('?') ? '&' : '?';
+        connectUrl = `${this.url}${separator}token=${encodeURIComponent(this.token)}`;
+      }
+      this.ws = new WebSocket(connectUrl);
       this.setupEventHandlers();
     } catch (error) {
       this.setStatus('error');
@@ -82,6 +91,20 @@ export class WebSocketService {
    */
   public getStatus(): ConnectionStatus {
     return this.status;
+  }
+
+  /**
+   * Update token and reconnect if currently connected
+   */
+  public updateToken(token: string | undefined): void {
+    const wasConnected = this.ws?.readyState === WebSocket.OPEN;
+    this.token = token;
+
+    // If we're connected, reconnect with the new token
+    if (wasConnected) {
+      this.disconnect();
+      this.connect();
+    }
   }
 
   /**

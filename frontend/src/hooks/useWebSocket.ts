@@ -6,6 +6,7 @@ import { AllocatorType, AllocatorConfig, DateRange } from '../types';
 interface UseWebSocketOptions {
   url?: string;
   autoConnect?: boolean;
+  token?: string;
 }
 
 interface UseWebSocketReturn {
@@ -28,8 +29,21 @@ interface UseWebSocketReturn {
 
 // Dynamically determine WebSocket URL based on current host
 // Uses wss:// for https, ws:// for http
+// In development, use VITE_WS_URL env var if set, otherwise use backend port 8000
 const getDefaultWsUrl = (): string => {
   if (typeof window === 'undefined') return 'ws://localhost:8000/ws';
+
+  // Check for explicit WebSocket URL (useful for development)
+  const envWsUrl = import.meta.env.VITE_WS_URL;
+  if (envWsUrl) return envWsUrl;
+
+  // In development (Vite dev server), connect to backend on port 8000
+  if (import.meta.env.DEV) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.hostname}:8000/ws`;
+  }
+
+  // In production, use same host (assumes backend serves frontend)
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${protocol}//${window.location.host}/ws`;
 };
@@ -37,7 +51,7 @@ const getDefaultWsUrl = (): string => {
 const DEFAULT_URL = getDefaultWsUrl();
 
 export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketReturn {
-  const { url = DEFAULT_URL, autoConnect = true } = options;
+  const { url = DEFAULT_URL, autoConnect = true, token } = options;
 
   // State
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
@@ -52,6 +66,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
   useEffect(() => {
     wsServiceRef.current = new WebSocketService({
       url,
+      token,
       onStatusChange: (newStatus) => {
         setStatus(newStatus);
         if (newStatus === 'connected') {
@@ -86,21 +101,22 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
       },
     });
 
-    // Auto-connect if enabled
-    if (autoConnect) {
+    // Auto-connect if enabled and token is available (or autoConnect for unauthenticated mode)
+    if (autoConnect && (token || token === undefined)) {
       wsServiceRef.current.connect();
     }
 
-    // Cleanup on unmount
+    // Cleanup on unmount or when dependencies change
     return () => {
       if (wsServiceRef.current) {
         wsServiceRef.current.disconnect();
         wsServiceRef.current = null;
       }
-      messageHandlerRef.current = null;
+      // Don't clear messageHandlerRef - it's managed by the calling component
+      // and should persist across reconnections
       messageQueueRef.current = [];
     };
-  }, [url, autoConnect]);
+  }, [url, autoConnect, token]);
 
   // Connection methods
   const connect = useCallback(() => {
