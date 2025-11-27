@@ -24,8 +24,8 @@ from auth import validate_token, AuthError, TokenPayload, is_auth_configured
 from config import WS_HOST, WS_PORT, CORS_ORIGINS, SSL_CERTFILE, SSL_KEYFILE
 from connection_state import ConnectionState
 from db import init_db, close_db, get_database_url, async_session_maker
-from db.crud import create_user, delete_user, update_user_activity, get_user_dashboard
-from message_handlers import MESSAGE_HANDLERS
+from db.crud import create_user, delete_user, update_user_activity, get_user_dashboard, get_allocators_by_user
+from message_handlers import MESSAGE_HANDLERS, create_allocator_instance
 from schemas import (
     ComputePortfolio,
     CreateAllocator,
@@ -185,6 +185,24 @@ async def websocket_endpoint(
         logger.warning(f"Failed to create user record in database: {db_error}")
         # Continue execution even if database tracking fails
 
+    # Load user's allocators from database into session state
+    if auth0_user_id:
+        try:
+            async with async_session_maker() as db_session:
+                db_allocators = await get_allocators_by_user(db_session, auth0_user_id)
+                for db_alloc in db_allocators:
+                    # Recreate allocator instance from stored config
+                    allocator_instance = create_allocator_instance(db_alloc.allocator_type, db_alloc.config)
+                    state.allocators[str(db_alloc.id)] = {
+                        "id": str(db_alloc.id),
+                        "type": db_alloc.allocator_type,
+                        "config": db_alloc.config,
+                        "instance": allocator_instance,
+                    }
+                logger.info(f"Loaded {len(db_allocators)} allocators for user {auth0_user_id}")
+        except Exception as e:
+            logger.warning(f"Failed to load allocators from database: {e}")
+
     try:
         while True:
             # Receive raw JSON text
@@ -343,9 +361,10 @@ async def get_dashboard(
 
 # Serve frontend static files at root (must be last to not override API routes)
 STATIC_DIR = Path(__file__).parent / "static"
-if STATIC_DIR.exists():
+ASSETS_DIR = STATIC_DIR / "assets"
+if STATIC_DIR.exists() and ASSETS_DIR.exists():
     # Mount static files for assets (JS, CSS, images)
-    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+    app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
     # Catch-all route for SPA - serve index.html for all non-API routes
     from fastapi.responses import FileResponse

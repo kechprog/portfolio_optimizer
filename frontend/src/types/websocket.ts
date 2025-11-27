@@ -111,10 +111,17 @@ export interface ResultMessage {
   };
 }
 
+export type ErrorCategory = 'validation' | 'network' | 'compute' | 'auth' | 'database' | 'system';
+export type ErrorSeverity = 'error' | 'warning';
+
 export interface ErrorMessage {
   type: 'error';
   message: string;
+  code: string;
+  category: ErrorCategory;
+  severity: ErrorSeverity;
   allocator_id?: string;
+  recoverable: boolean;
 }
 
 // Union type for all server messages

@@ -13,6 +13,7 @@ import pandas as pd
 from pypfopt import EfficientFrontier, expected_returns, risk_models
 
 from .base import OptimizationAllocatorBase
+from errors import ComputeError
 
 # Try to import PyPortfolioOpt's OptimizationError if available
 try:
@@ -136,10 +137,10 @@ class MinVolatilityAllocator(OptimizationAllocatorBase):
 
         except (ValueError, OptimizationError) as e:
             logger.error(f"MinVolatility optimization failed: {e}")
-            return {}
+            raise ComputeError(f"Min Volatility optimization failed: {str(e)}", "CMP_001", recoverable=True)
         except Exception as e:
             logger.error(f"Unexpected error in MinVolatility optimization: {e}")
-            return {}
+            raise ComputeError(f"Min Volatility optimization failed: {str(e)}", "CMP_001", recoverable=True)
 
     def get_config(self) -> Dict[str, Any]:
         """

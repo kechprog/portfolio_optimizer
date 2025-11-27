@@ -13,6 +13,7 @@ import pandas as pd
 from pypfopt import EfficientFrontier, expected_returns, risk_models
 
 from .base import OptimizationAllocatorBase
+from errors import ComputeError
 
 # Try to import PyPortfolioOpt's OptimizationError if available
 try:
@@ -112,10 +113,10 @@ class MaxSharpeAllocator(OptimizationAllocatorBase):
 
         except (ValueError, OptimizationError) as e:
             logger.error(f"MaxSharpe optimization failed: {e}")
-            return {}
+            raise ComputeError(f"Max Sharpe optimization failed: {str(e)}", "CMP_001", recoverable=True)
         except Exception as e:
             logger.error(f"Unexpected error in MaxSharpe optimization: {e}")
-            return {}
+            raise ComputeError(f"Max Sharpe optimization failed: {str(e)}", "CMP_001", recoverable=True)
 
     def get_config(self) -> Dict[str, Any]:
         """

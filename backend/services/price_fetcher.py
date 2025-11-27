@@ -42,12 +42,18 @@ class RateLimitError(PriceFetcherError):
 
 class InvalidTickerError(PriceFetcherError):
     """Invalid or unknown ticker symbol."""
-    pass
+    def __init__(self, message: str, ticker: str = None):
+        super().__init__(message)
+        self.ticker = ticker
 
 
 class CacheDateRangeError(PriceFetcherError):
     """Requested start_date is before cached first_date."""
-    pass
+    def __init__(self, message: str, ticker: str = None, requested_date: date = None, earliest_date: date = None):
+        super().__init__(message)
+        self.ticker = ticker
+        self.requested_date = requested_date
+        self.earliest_date = earliest_date
 
 
 def get_ticker_lock(ticker: str) -> asyncio.Lock:
@@ -129,7 +135,7 @@ async def fetch_from_alpha_vantage(ticker: str) -> Dict[str, Any]:
 
             # Check for API error messages
             if "Error Message" in data:
-                raise InvalidTickerError(f"Invalid ticker '{ticker}': {data['Error Message']}")
+                raise InvalidTickerError(f"Invalid ticker '{ticker}': {data['Error Message']}", ticker=ticker)
 
             if "Note" in data:
                 raise RateLimitError(f"API rate limit exceeded: {data['Note']}")
@@ -295,7 +301,10 @@ async def get_price_data(
         if start_date < cached['first_date']:
             raise CacheDateRangeError(
                 f"Requested start_date ({start_date}) is before cached first_date ({cached['first_date']}) for {ticker}. "
-                f"The Alpha Vantage API returns all available history, so data before {cached['first_date']} does not exist."
+                f"The Alpha Vantage API returns all available history, so data before {cached['first_date']} does not exist.",
+                ticker=ticker,
+                requested_date=start_date,
+                earliest_date=cached['first_date']
             )
 
         # Cache hit - use cached data

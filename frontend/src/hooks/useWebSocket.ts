@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { WebSocketService } from '../services';
-import { ConnectionStatus, ServerMessage } from '../types/websocket';
+import { ConnectionStatus, ServerMessage, ErrorMessage } from '../types/websocket';
 import { AllocatorType, AllocatorConfig, DateRange } from '../types';
 
 interface UseWebSocketOptions {
   url?: string;
   autoConnect?: boolean;
   token?: string;
+  onError?: (error: ErrorMessage) => void;
 }
 
 interface DashboardSettingsUpdate {
@@ -59,7 +60,7 @@ const getDefaultWsUrl = (): string => {
 const DEFAULT_URL = getDefaultWsUrl();
 
 export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketReturn {
-  const { url = DEFAULT_URL, autoConnect = true, token } = options;
+  const { url = DEFAULT_URL, autoConnect = true, token, onError } = options;
 
   // State
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
@@ -91,6 +92,10 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
         // Handle error messages
         if (message.type === 'error') {
           setError(message.message);
+          // Call the onError callback if provided
+          if (onError) {
+            onError(message);
+          }
         }
 
         // Call the user-provided message handler if set, otherwise queue the message
@@ -124,7 +129,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
       // and should persist across reconnections
       messageQueueRef.current = [];
     };
-  }, [url, autoConnect, token]);
+  }, [url, autoConnect, token, onError]);
 
   // Connection methods
   const connect = useCallback(() => {

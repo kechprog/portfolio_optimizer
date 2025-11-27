@@ -138,7 +138,11 @@ class Error(BaseModel):
 
     type: Literal["error"] = "error"
     message: str
+    code: str = "SYS_001"
+    category: str = "system"
+    severity: str = "error"
     allocator_id: Optional[str] = None
+    recoverable: bool = False
 
 
 class DashboardSettingsUpdated(BaseModel):

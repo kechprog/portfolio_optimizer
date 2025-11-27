@@ -27,6 +27,7 @@ from db.crud import (
     get_allocators_by_user,
     create_or_update_dashboard_settings,
 )
+from errors import AppError, ValidationError, NetworkError, ComputeError, DatabaseError, ErrorCategory, ErrorSeverity
 from schemas import (
     AllocatorCreated,
     AllocatorDeleted,
@@ -44,9 +45,14 @@ from schemas import (
     UpdateDashboardSettings,
 )
 from services.portfolio import calculate_metrics, compute_performance
-from services.price_fetcher import get_price_data
+from services.price_fetcher import get_price_data, InvalidTickerError, RateLimitError, APIError, CacheDateRangeError
 
 logger = logging.getLogger(__name__)
+
+
+async def send_error(websocket: WebSocket, error: AppError) -> None:
+    """Send structured error through WebSocket."""
+    await websocket.send_json(error.to_dict())
 
 
 # Registry of allocator types to their implementation classes
@@ -175,7 +181,14 @@ async def handle_create_allocator(
                     logger.debug(f"Persisted allocator {allocator_id} to database")
             except Exception as db_error:
                 logger.error(f"Failed to persist allocator to database: {db_error}")
-                # Continue with session-only storage
+                # Send warning but continue with session-only storage
+                warning = DatabaseError(
+                    message="Allocator created but failed to save. Changes may be lost on disconnect.",
+                    code="DB_002",
+                    severity=ErrorSeverity.WARNING,
+                    recoverable=True
+                )
+                await send_error(websocket, warning)
 
         # Store in session state (for computation)
         state.allocators[allocator_id] = {
@@ -193,6 +206,13 @@ async def handle_create_allocator(
         await send_message(websocket, response)
         logger.info(f"Created allocator {allocator_id} of type {message.allocator_type}")
 
+    except ValueError as e:
+        logger.error(f"Validation error creating allocator: {e}")
+        error = ValidationError(
+            message=str(e),
+            code="VAL_004"
+        )
+        await send_error(websocket, error)
     except Exception as e:
         logger.error(f"Error creating allocator: {e}")
         await send_message(websocket, Error(message=str(e)))
@@ -218,7 +238,7 @@ async def handle_update_allocator(
             await send_message(
                 websocket,
                 Error(
-                    message=f"Allocator {message.id} not found",
+                    message="Allocator not found. Please refresh the page or create a new allocator.",
                     allocator_id=message.id,
                 ),
             )
@@ -244,6 +264,14 @@ async def handle_update_allocator(
                     logger.debug(f"Persisted allocator update {message.id} to database")
             except Exception as db_error:
                 logger.error(f"Failed to persist allocator update to database: {db_error}")
+                # Send warning but continue with the operation
+                warning = DatabaseError(
+                    message="Allocator updated but failed to save. Changes may be lost on disconnect.",
+                    code="DB_002",
+                    severity=ErrorSeverity.WARNING,
+                    recoverable=True
+                )
+                await send_error(websocket, warning)
 
         # Invalidate cached results for this allocator since config changed
         await state.invalidate_allocator_cache(message.id)
@@ -262,11 +290,18 @@ async def handle_update_allocator(
             await send_message(
                 websocket,
                 Error(
-                    message=f"Allocator {message.id} not found",
+                    message="Allocator not found. Please refresh the page or create a new allocator.",
                     allocator_id=message.id,
                 ),
             )
 
+    except ValueError as e:
+        logger.error(f"Validation error updating allocator {message.id}: {e}")
+        error = ValidationError(
+            message=str(e),
+            code="VAL_004"
+        )
+        await send_error(websocket, error)
     except Exception as e:
         logger.error(f"Error updating allocator {message.id}: {e}")
         await send_message(
@@ -302,6 +337,14 @@ async def handle_delete_allocator(
                     logger.debug(f"Deleted allocator {message.id} from database")
             except Exception as db_error:
                 logger.error(f"Failed to delete allocator from database: {db_error}")
+                # Send warning but continue with the operation
+                warning = DatabaseError(
+                    message="Allocator deleted but failed to save. Changes may be lost on disconnect.",
+                    code="DB_002",
+                    severity=ErrorSeverity.WARNING,
+                    recoverable=True
+                )
+                await send_error(websocket, warning)
 
         # Invalidate cached results for this allocator
         await state.invalidate_allocator_cache(message.id)
@@ -314,7 +357,7 @@ async def handle_delete_allocator(
             await send_message(
                 websocket,
                 Error(
-                    message=f"Allocator {message.id} not found",
+                    message="Allocator not found. Please refresh the page or create a new allocator.",
                     allocator_id=message.id,
                 ),
             )
@@ -373,7 +416,7 @@ async def handle_compute_portfolio(
             await send_message(
                 websocket,
                 Error(
-                    message=f"Allocator {allocator_id} not found",
+                    message="Allocator not found. Please refresh the page or create a new allocator.",
                     allocator_id=allocator_id,
                 ),
             )
@@ -422,9 +465,34 @@ async def handle_compute_portfolio(
             return
 
         # Parse dates from strings to date objects
-        fit_start_date = date.fromisoformat(message.fit_start_date)
-        fit_end_date = date.fromisoformat(message.fit_end_date)
-        test_end_date = date.fromisoformat(message.test_end_date)
+        try:
+            fit_start_date = date.fromisoformat(message.fit_start_date)
+            fit_end_date = date.fromisoformat(message.fit_end_date)
+            test_end_date = date.fromisoformat(message.test_end_date)
+        except ValueError as e:
+            error = ValidationError(
+                message=f"Invalid date format: {e}",
+                code="VAL_002"
+            )
+            await send_error(websocket, error)
+            return
+
+        # Validate date ranges
+        if fit_end_date <= fit_start_date:
+            error = ValidationError(
+                message="Fit end date must be after fit start date",
+                code="VAL_003"
+            )
+            await send_error(websocket, error)
+            return
+
+        if test_end_date <= fit_end_date:
+            error = ValidationError(
+                message="Test end date must be after fit end date",
+                code="VAL_003"
+            )
+            await send_error(websocket, error)
+            return
 
         # Create a progress callback that sends Progress messages via websocket
         async def progress_callback(msg: str, step: int, total_steps: int):
@@ -462,10 +530,11 @@ async def handle_compute_portfolio(
         except asyncio.TimeoutError:
             error_msg = f"Computation timed out after 300 seconds for allocator {allocator_id}"
             logger.error(error_msg)
-            await send_message(
-                websocket,
-                Error(message="Computation timed out after 5 minutes. Please try with a shorter date range or fewer assets.", allocator_id=allocator_id),
+            error = ComputeError(
+                message="Computation timed out after 5 minutes. Please try with a shorter date range or fewer assets.",
+                code="CMP_004"
             )
+            await send_error(websocket, error)
             return
 
         # Convert portfolio segments to dict format for the Result message
@@ -512,12 +581,71 @@ async def handle_compute_portfolio(
         await send_message(websocket, result)
         logger.info(f"Completed computation for allocator {allocator_id}")
 
+    except InvalidTickerError as e:
+        logger.error(f"Invalid ticker for allocator {allocator_id}: {e}")
+        # Get allocator name for human-readable message
+        allocator_name = allocator_data.get("config", {}).get("name", allocator_data.get("type", "allocator"))
+        ticker = e.ticker or "unknown"
+        error = ValidationError(
+            message=f"Invalid ticker '{ticker}' in {allocator_name}",
+            code="VAL_001",
+            allocator_id=allocator_id
+        )
+        await send_error(websocket, error)
+    except CacheDateRangeError as e:
+        logger.error(f"Date range error for allocator {allocator_id}: {e}")
+        # Get allocator name for human-readable message
+        allocator_name = allocator_data.get("config", {}).get("name", allocator_data.get("type", "allocator"))
+        ticker = e.ticker or "unknown instrument"
+        requested = e.requested_date.isoformat() if e.requested_date else "unknown"
+        earliest = e.earliest_date.isoformat() if e.earliest_date else "unknown"
+        error = ValidationError(
+            message=f"No data available for {requested} in '{allocator_name}'. The earliest available date is {earliest} (due to {ticker}).",
+            code="VAL_006",
+            allocator_id=allocator_id
+        )
+        await send_error(websocket, error)
+    except RateLimitError as e:
+        logger.error(f"Rate limit error for allocator {allocator_id}: {e}")
+        error = NetworkError(
+            message=str(e),
+            code="NET_002",
+            recoverable=True
+        )
+        await send_error(websocket, error)
+    except AppError as e:
+        logger.error(f"Application error computing portfolio for {allocator_id}: {e}")
+        await send_error(websocket, e)
+    except ValueError as e:
+        # Handle ValueError from compute_performance (e.g., failed tickers)
+        logger.error(f"Value error computing portfolio for {allocator_id}: {e}")
+        allocator_name = allocator_data.get("config", {}).get("name", allocator_data.get("type", "allocator")) if allocator_data else "allocator"
+        error_msg = str(e)
+        # Make the message more user-friendly by including allocator name
+        if "Failed to fetch price data" in error_msg:
+            # Extract failed tickers from message
+            error = ValidationError(
+                message=f"{error_msg} in '{allocator_name}'",
+                code="VAL_001",
+                allocator_id=allocator_id
+            )
+        else:
+            error = ValidationError(
+                message=f"{error_msg} in '{allocator_name}'",
+                code="VAL_004",
+                allocator_id=allocator_id
+            )
+        await send_error(websocket, error)
     except Exception as e:
         logger.error(f"Error computing portfolio for {allocator_id}: {e}", exc_info=True)
-        await send_message(
-            websocket,
-            Error(message=str(e), allocator_id=allocator_id),
+        allocator_name = allocator_data.get("config", {}).get("name", allocator_data.get("type", "allocator")) if allocator_data else "allocator"
+        error = AppError(
+            message=f"Error in '{allocator_name}': {str(e)}",
+            code="SYS_001",
+            category=ErrorCategory.SYSTEM,
+            allocator_id=allocator_id
         )
+        await send_error(websocket, error)
 
 
 async def handle_update_dashboard_settings(

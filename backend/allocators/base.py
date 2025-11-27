@@ -9,6 +9,8 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional, Set
 import logging
 
 import pandas as pd
+from errors import ComputeError
+from services.price_fetcher import InvalidTickerError, CacheDateRangeError
 
 # Initialize logger at module level
 logger = logging.getLogger(__name__)
@@ -329,6 +331,7 @@ class OptimizationAllocatorBase(Allocator):
         """
         price_column = "AdjClose" if self._use_adj_close else "Close"
         prices_list: List[pd.Series] = []
+        date_range_errors: List[CacheDateRangeError] = []
 
         for ticker in instruments:
             try:
@@ -346,9 +349,30 @@ class OptimizationAllocatorBase(Allocator):
                     logger.warning(f"No price column found for {ticker}")
                     continue
 
+            except InvalidTickerError:
+                # Re-raise invalid ticker errors so they can be displayed to user
+                raise
+            except CacheDateRangeError as e:
+                # Collect date range errors to find the most restrictive one
+                date_range_errors.append(e)
+                continue
             except Exception as e:
                 logger.error(f"Failed to fetch data for {ticker}: {e}")
                 continue
+
+        # If we have date range errors, find the most restrictive one (latest earliest_date)
+        if date_range_errors:
+            # Find the error with the latest earliest_date (most restrictive constraint)
+            most_restrictive = max(
+                date_range_errors,
+                key=lambda e: e.earliest_date if e.earliest_date else date.min
+            )
+            raise CacheDateRangeError(
+                message=f"No data available for requested date range. The earliest available date is {most_restrictive.earliest_date} (due to {most_restrictive.ticker}).",
+                ticker=most_restrictive.ticker,
+                requested_date=most_restrictive.requested_date,
+                earliest_date=most_restrictive.earliest_date
+            )
 
         if not prices_list:
             return None
@@ -465,14 +489,14 @@ class OptimizationAllocatorBase(Allocator):
                 )
                 if prices is None or prices.empty:
                     logger.error(f"({self._name}) No price data available")
-                    return portfolio
+                    raise ComputeError("Failed to fetch price data for instruments.", "CMP_002")
 
                 allocations = self._optimize(prices, instruments)
 
                 # Validate allocations before appending segment
                 if not allocations:
                     logger.warning(f"({self._name}) Empty allocations returned from optimization, skipping segment")
-                    return portfolio
+                    raise ComputeError("No valid allocations could be computed. Try different instruments or date range.", "CMP_003")
 
                 portfolio.append_segment(
                     start_date=fit_end_date,
@@ -480,8 +504,12 @@ class OptimizationAllocatorBase(Allocator):
                     allocations=allocations
                 )
 
+            except (InvalidTickerError, CacheDateRangeError, ComputeError):
+                # Re-raise user-facing errors so they can be displayed
+                raise
             except Exception as e:
                 logger.error(f"({self._name}) Static allocation failed: {e}", exc_info=True)
+                raise ComputeError(f"Allocation failed: {str(e)}", "CMP_001")
 
             if progress_callback:
                 await progress_callback(f"{optimization_name} optimization complete for {self._name}", 1, 1)
@@ -516,26 +544,24 @@ class OptimizationAllocatorBase(Allocator):
                 )
                 if prices is None or prices.empty:
                     logger.error(f"({self._name}) No price data at {current_date}")
-                    break
+                    raise ComputeError("Failed to fetch price data for instruments.", "CMP_002")
 
                 allocations = self._optimize(prices, instruments)
 
                 # Validate allocations before appending segment
                 if not allocations:
                     logger.warning(f"({self._name}) Empty allocations returned from optimization at {current_date}, skipping segment")
-                    # Calculate next date to continue the loop
-                    if isinstance(delta, timedelta):
-                        current_date = current_date + delta
-                    else:
-                        current_date = (pd.Timestamp(current_date) + delta).date()
-                    continue
+                    raise ComputeError("No valid allocations could be computed. Try different instruments or date range.", "CMP_003")
 
+            except (InvalidTickerError, CacheDateRangeError, ComputeError):
+                # Re-raise user-facing errors so they can be displayed
+                raise
             except Exception as e:
                 logger.error(
                     f"({self._name}) Dynamic allocation failed at {current_date}: {e}",
                     exc_info=True
                 )
-                break
+                raise ComputeError(f"Allocation failed at {current_date}: {str(e)}", "CMP_001")
 
             # Calculate segment end date
             if isinstance(delta, timedelta):
