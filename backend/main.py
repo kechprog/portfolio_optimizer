@@ -21,7 +21,7 @@ from pydantic import ValidationError
 from starlette import status
 
 from auth import validate_token, AuthError, TokenPayload, is_auth_configured
-from config import WS_HOST, WS_PORT, CORS_ORIGINS
+from config import WS_HOST, WS_PORT, CORS_ORIGINS, SSL_CERTFILE, SSL_KEYFILE
 from connection_state import ConnectionState
 from db import init_db, close_db, get_database_url, async_session_maker
 from db.crud import create_user, delete_user, update_user_activity, get_user_dashboard
@@ -348,10 +348,20 @@ if STATIC_DIR.exists():
 
 
 if __name__ == "__main__":
+    # Configure SSL for production if certificates are provided
+    ssl_config = {}
+    if SSL_CERTFILE and SSL_KEYFILE:
+        ssl_config = {
+            "ssl_certfile": SSL_CERTFILE,
+            "ssl_keyfile": SSL_KEYFILE,
+        }
+        logger.info(f"SSL enabled with certificate: {SSL_CERTFILE}")
+
     uvicorn.run(
         "main:app",
         host=WS_HOST,
         port=WS_PORT,
         reload=False,
         log_level="info",
+        **ssl_config,
     )

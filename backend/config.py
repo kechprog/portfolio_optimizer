@@ -17,9 +17,16 @@ DATABASE_PATH = BASE_DIR / "price_cache.db"
 # If not set, the application will fall back to SQLite
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
-# WebSocket
+# SSL Configuration (for production HTTPS)
+# Set these environment variables in production to enable HTTPS
+SSL_CERTFILE = os.getenv("SSL_CERTFILE", "")  # e.g., /etc/letsencrypt/live/domain/fullchain.pem
+SSL_KEYFILE = os.getenv("SSL_KEYFILE", "")    # e.g., /etc/letsencrypt/live/domain/privkey.pem
+
+# WebSocket / HTTP Server
 WS_HOST = os.getenv("WS_HOST", "0.0.0.0")
-WS_PORT = int(os.getenv("WS_PORT", "8000"))
+# Default to port 443 when SSL is enabled, otherwise 8000
+_default_port = "443" if (SSL_CERTFILE and SSL_KEYFILE) else "8000"
+WS_PORT = int(os.getenv("WS_PORT", _default_port))
 
 # CORS
 # Parse CORS_ORIGINS from comma-separated string or use default development origins
