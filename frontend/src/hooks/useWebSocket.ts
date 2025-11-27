@@ -29,7 +29,7 @@ interface UseWebSocketReturn {
   updateAllocator: (id: string, config: AllocatorConfig) => void;
   deleteAllocator: (id: string) => void;
   listAllocators: () => void;
-  compute: (allocatorId: string, dateRange: DateRange, includeDividends: boolean) => void;
+  compute: (allocatorId: string, dateRange: DateRange, includeDividends: boolean, currentAllocator: number, totalAllocators: number) => void;
   updateDashboardSettings: (settings: DashboardSettingsUpdate) => void;
 
   // Event registration
@@ -186,7 +186,9 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
   const compute = useCallback((
     allocatorId: string,
     dateRange: DateRange,
-    includeDividends: boolean
+    includeDividends: boolean,
+    currentAllocator: number,
+    totalAllocators: number
   ) => {
     wsServiceRef.current?.send({
       type: 'compute',
@@ -195,6 +197,8 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
       fit_end_date: dateRange.fit_end_date,
       test_end_date: dateRange.test_end_date,
       include_dividends: includeDividends,
+      current_allocator: currentAllocator,
+      total_allocators: totalAllocators,
     });
   }, []);
 

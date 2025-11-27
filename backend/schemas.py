@@ -46,6 +46,9 @@ class ComputePortfolio(BaseModel):
     fit_end_date: str
     test_end_date: str
     include_dividends: bool = False
+    # Progress tracking - which allocator of how many
+    current_allocator: int = 1  # 1-indexed
+    total_allocators: int = 1
 
 
 class ListAllocators(BaseModel):
@@ -119,9 +122,12 @@ class Progress(BaseModel):
 
     type: Literal["progress"] = "progress"
     allocator_id: str
-    message: str
-    step: int
-    total_steps: int
+    allocator_name: str  # Human-readable name for display
+    phase: Literal["fetching", "optimizing", "metrics", "complete", "cached"]
+    current: int  # Which allocator (1-indexed)
+    total: int  # Total enabled allocators
+    segment: Optional[int] = None  # Current segment for periodic rebalancing
+    total_segments: Optional[int] = None  # Total segments
 
 
 class Result(BaseModel):

@@ -41,6 +41,8 @@ export interface ComputeMessage {
   fit_end_date: string;
   test_end_date: string;
   include_dividends: boolean;
+  current_allocator: number;  // 1-indexed
+  total_allocators: number;
 }
 
 // Union type for all client messages
@@ -82,12 +84,17 @@ export interface AllocatorsListMessage {
   }>;
 }
 
+export type ProgressPhase = 'fetching' | 'optimizing' | 'metrics' | 'complete' | 'cached';
+
 export interface ProgressMessage {
   type: 'progress';
   allocator_id: string;
-  message: string;
-  step: number;
-  total_steps: number;
+  allocator_name: string;  // Human-readable name for display
+  phase: ProgressPhase;
+  current: number;  // Which allocator (1-indexed)
+  total: number;    // Total enabled allocators
+  segment?: number;        // Current segment for periodic rebalancing
+  total_segments?: number; // Total segments
 }
 
 export interface ResultMessage {

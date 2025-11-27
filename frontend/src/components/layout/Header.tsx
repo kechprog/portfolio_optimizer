@@ -12,9 +12,13 @@ interface HeaderProps {
   onCompute: () => void;
   isComputing: boolean;
   progress?: {
-    message: string;
-    step: number;
-    total_steps: number;
+    allocator_id: string;
+    allocator_name: string;
+    phase: 'fetching' | 'optimizing' | 'metrics' | 'complete' | 'cached';
+    current: number;
+    total: number;
+    segment?: number;
+    total_segments?: number;
   } | null;
 }
 
@@ -438,6 +442,11 @@ export const Header: React.FC<HeaderProps> = ({
                   const newDate = new Date(date.getFullYear(), date.getMonth(), Math.min(current.getDate(), new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()));
                   onDateRangeChange({ ...dateRange, fit_start_date: formatDate(newDate) });
                 }}
+                onYearChange={(date) => {
+                  const current = parseDate(dateRange.fit_start_date);
+                  const newDate = new Date(date.getFullYear(), current.getMonth(), Math.min(current.getDate(), new Date(date.getFullYear(), current.getMonth() + 1, 0).getDate()));
+                  onDateRangeChange({ ...dateRange, fit_start_date: formatDate(newDate) });
+                }}
                 customInput={<CustomDateInput title="Fit start date" />}
                 dateFormat="yyyy-MM-dd"
                 popperClassName="date-picker-popper"
@@ -451,6 +460,11 @@ export const Header: React.FC<HeaderProps> = ({
                 onMonthChange={(date) => {
                   const current = parseDate(dateRange.fit_end_date);
                   const newDate = new Date(date.getFullYear(), date.getMonth(), Math.min(current.getDate(), new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()));
+                  onDateRangeChange({ ...dateRange, fit_end_date: formatDate(newDate) });
+                }}
+                onYearChange={(date) => {
+                  const current = parseDate(dateRange.fit_end_date);
+                  const newDate = new Date(date.getFullYear(), current.getMonth(), Math.min(current.getDate(), new Date(date.getFullYear(), current.getMonth() + 1, 0).getDate()));
                   onDateRangeChange({ ...dateRange, fit_end_date: formatDate(newDate) });
                 }}
                 customInput={<CustomDateInput title="Fit end date" />}
@@ -470,6 +484,11 @@ export const Header: React.FC<HeaderProps> = ({
               onMonthChange={(date) => {
                 const current = parseDate(dateRange.test_end_date);
                 const newDate = new Date(date.getFullYear(), date.getMonth(), Math.min(current.getDate(), new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()));
+                onDateRangeChange({ ...dateRange, test_end_date: formatDate(newDate) });
+              }}
+              onYearChange={(date) => {
+                const current = parseDate(dateRange.test_end_date);
+                const newDate = new Date(date.getFullYear(), current.getMonth(), Math.min(current.getDate(), new Date(date.getFullYear(), current.getMonth() + 1, 0).getDate()));
                 onDateRangeChange({ ...dateRange, test_end_date: formatDate(newDate) });
               }}
               customInput={<CustomDateInput title="Test end date" />}
@@ -504,12 +523,18 @@ export const Header: React.FC<HeaderProps> = ({
             {isComputing ? (
               <>
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                <span>{progress?.message || 'Computing...'}</span>
-                {progress && (
-                  <span className="text-white/70">
-                    ({progress.step}/{progress.total_steps})
-                  </span>
-                )}
+                <span>
+                  {progress && progress.phase ? (
+                    <>
+                      {progress.current}/{progress.total}{' '}
+                      {progress.phase === 'cached' ? 'Cached' :
+                       progress.phase === 'complete' ? 'Done' :
+                       progress.phase.charAt(0).toUpperCase() + progress.phase.slice(1)}{' '}
+                      {progress.allocator_name}
+                      {progress.segment && progress.total_segments && ` ${progress.segment}/${progress.total_segments}`}
+                    </>
+                  ) : 'Computing...'}
+                </span>
               </>
             ) : (
               <>

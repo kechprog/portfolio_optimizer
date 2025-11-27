@@ -16,6 +16,7 @@ interface ModalProps {
 export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, size = 'md', allowOverflow = false }) => {
   const modalRef = useRef<HTMLDivElement>(null);
   const previousActiveElementRef = useRef<HTMLElement | null>(null);
+  const mouseDownTargetRef = useRef<EventTarget | null>(null);
 
   // Focus trap and keyboard handling
   useEffect(() => {
@@ -105,8 +106,13 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, 
     };
   }, [isOpen, onClose]);
 
+  const handleMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    mouseDownTargetRef.current = event.target;
+  };
+
   const handleOverlayClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.target === event.currentTarget) {
+    // Only close if both mousedown and mouseup were on the overlay itself
+    if (event.target === event.currentTarget && mouseDownTargetRef.current === event.currentTarget) {
       onClose();
     }
   };
@@ -122,6 +128,7 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, 
   return (
     <div
       className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200"
+      onMouseDown={handleMouseDown}
       onClick={handleOverlayClick}
     >
       <div

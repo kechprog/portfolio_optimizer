@@ -96,9 +96,6 @@ class ManualAllocator(Allocator):
         Returns:
             Portfolio with a single segment containing the manual allocations.
         """
-        if progress_callback:
-            await progress_callback("Computing manual allocations", 1, 2)
-
         # Validate date range
         if test_end_date <= fit_end_date:
             raise ValueError(
@@ -111,9 +108,6 @@ class ManualAllocator(Allocator):
             end_date=test_end_date,
             allocations=self._allocations.copy()
         )
-
-        if progress_callback:
-            await progress_callback("Manual allocations complete", 2, 2)
 
         return portfolio
 

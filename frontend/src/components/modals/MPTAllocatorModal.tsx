@@ -184,7 +184,7 @@ export const MPTAllocatorModal: React.FC<MPTAllocatorModalProps> = ({
           <label className="block text-sm font-medium text-text-secondary mb-2">
             Instruments
           </label>
-          <div className="max-h-[300px] overflow-y-auto pr-1 -mr-1">
+          <div className="max-h-[300px] overflow-y-auto pl-0.5 pt-0.5 pb-2 pr-1 -ml-0.5 -mt-0.5 -mr-1">
             <div className="flex flex-col gap-2">
               {instruments.map((row, index) => (
                 <div key={row.id} className="flex items-center gap-3">

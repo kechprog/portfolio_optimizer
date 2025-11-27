@@ -124,18 +124,27 @@ def create_allocator_instance(allocator_type: str, config: dict) -> Allocator:
     return cls.from_config(transformed_config)
 
 
-async def send_message(websocket: WebSocket, message: Any) -> None:
+async def send_message(websocket: WebSocket, message: Any) -> bool:
     """
     Send a Pydantic model as JSON through the WebSocket.
 
     Args:
         websocket: The WebSocket connection.
         message: A Pydantic model to serialize and send.
+
+    Returns:
+        True if message was sent successfully, False if connection was closed.
     """
     if websocket.client_state != WebSocketState.CONNECTED:
         logger.warning(f"Cannot send message, WebSocket not connected: {websocket.client_state}")
-        return
-    await websocket.send_json(message.model_dump())
+        return False
+    try:
+        await websocket.send_json(message.model_dump())
+        return True
+    except Exception as e:
+        # Handle WebSocketDisconnect and other connection errors gracefully
+        logger.debug(f"Failed to send message (connection closed): {e}")
+        return False
 
 
 async def handle_create_allocator(
@@ -433,6 +442,11 @@ async def handle_compute_portfolio(
             )
             return
 
+        # Progress tracking info from request
+        current_allocator = message.current_allocator
+        total_allocators = message.total_allocators
+        allocator_name = allocator_data.get("config", {}).get("name", "Allocator")
+
         # Check cache before computing
         cache_key = create_compute_cache_key(
             allocator_id=allocator_id,
@@ -451,9 +465,10 @@ async def handle_compute_portfolio(
                 websocket,
                 Progress(
                     allocator_id=allocator_id,
-                    message="Using cached result",
-                    step=1,
-                    total_steps=1,
+                    allocator_name=allocator_name,
+                    phase="cached",
+                    current=current_allocator,
+                    total=total_allocators,
                 ),
             )
             result = Result(
@@ -494,27 +509,41 @@ async def handle_compute_portfolio(
             await send_error(websocket, error)
             return
 
-        # Create a progress callback that sends Progress messages via websocket
-        async def progress_callback(msg: str, step: int, total_steps: int):
+        # Helper to send progress updates with new schema
+        async def send_progress(
+            phase: str,
+            segment: int = None,
+            total_segments: int = None
+        ):
             await send_message(
                 websocket,
                 Progress(
                     allocator_id=allocator_id,
-                    message=msg,
-                    step=step,
-                    total_steps=total_steps,
+                    allocator_name=allocator_name,
+                    phase=phase,
+                    current=current_allocator,
+                    total=total_allocators,
+                    segment=segment,
+                    total_segments=total_segments,
                 ),
             )
+
+        # Create a progress callback for allocators (they report segment progress)
+        async def allocator_progress_callback(
+            segment: int = None,
+            total_segments: int = None
+        ):
+            await send_progress("optimizing", segment, total_segments)
 
         # Create a price fetcher wrapper
         async def price_fetcher(ticker: str, start: date, end: date):
             return await get_price_data(ticker, start, end)
 
-        # Send initial progress
-        await progress_callback("Starting portfolio computation...", 0, 4)
+        # Send fetching progress
+        await send_progress("fetching")
 
         # Compute the portfolio allocations with a timeout
-        await progress_callback("Computing allocations...", 1, 4)
+        await send_progress("optimizing")
         try:
             portfolio: Portfolio = await asyncio.wait_for(
                 allocator_instance.compute(
@@ -523,7 +552,7 @@ async def handle_compute_portfolio(
                     test_end_date=test_end_date,
                     include_dividends=message.include_dividends,
                     price_fetcher=price_fetcher,
-                    progress_callback=progress_callback,
+                    progress_callback=allocator_progress_callback,
                 ),
                 timeout=300  # 5 minutes timeout
             )
@@ -547,7 +576,7 @@ async def handle_compute_portfolio(
             })
 
         # Calculate performance metrics
-        await progress_callback("Calculating performance metrics...", 3, 4)
+        await send_progress("metrics")
         performance = await compute_performance(
             portfolio=portfolio,
             fit_end_date=fit_end_date,
@@ -563,7 +592,7 @@ async def handle_compute_portfolio(
         )
         performance["stats"] = stats
 
-        await progress_callback("Computation complete", 4, 4)
+        await send_progress("complete")
 
         # Cache the result for future use
         await state.set_cached_result(cache_key, {

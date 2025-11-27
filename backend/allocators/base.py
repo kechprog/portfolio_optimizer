@@ -140,7 +140,8 @@ class Portfolio:
 
 
 # Type aliases for callback functions
-ProgressCallback = Callable[[str, int, int], Coroutine[Any, Any, None]]
+# ProgressCallback receives (segment, total_segments) for periodic rebalancing progress
+ProgressCallback = Callable[[Optional[int], Optional[int]], Coroutine[Any, Any, None]]
 PriceFetcher = Callable[[str, date, date], Coroutine[Any, Any, pd.DataFrame]]
 
 
@@ -478,9 +479,6 @@ class OptimizationAllocatorBase(Allocator):
                 f"test_end_date ({test_end_date}) must be after fit_end_date ({fit_end_date})"
             )
 
-        if progress_callback:
-            await progress_callback(f"Optimizing {optimization_name} for {self._name}...", 0, 1)
-
         if not self._update_enabled:
             # Single optimization using fit period
             try:
@@ -510,9 +508,6 @@ class OptimizationAllocatorBase(Allocator):
             except Exception as e:
                 logger.error(f"({self._name}) Static allocation failed: {e}", exc_info=True)
                 raise ComputeError(f"Allocation failed: {str(e)}", "CMP_001")
-
-            if progress_callback:
-                await progress_callback(f"{optimization_name} optimization complete for {self._name}", 1, 1)
 
             return portfolio
 
@@ -584,19 +579,8 @@ class OptimizationAllocatorBase(Allocator):
 
             segment_count += 1
             if progress_callback:
-                await progress_callback(
-                    f"Optimizing {optimization_name} for {self._name} (segment {segment_count}/{total_segments})...",
-                    segment_count,
-                    total_segments
-                )
+                await progress_callback(segment_count, total_segments)
 
             current_date = segment_end_date
-
-        if progress_callback:
-            await progress_callback(
-                f"{optimization_name} optimization complete for {self._name} ({segment_count} segments)",
-                total_segments,
-                total_segments
-            )
 
         return portfolio

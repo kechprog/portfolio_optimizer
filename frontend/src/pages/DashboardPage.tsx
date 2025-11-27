@@ -138,9 +138,12 @@ export const DashboardPage: React.FC = () => {
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [computingProgress, setComputingProgress] = useState<{
     allocator_id: string;
-    message: string;
-    step: number;
-    total_steps: number;
+    allocator_name: string;
+    phase: 'fetching' | 'optimizing' | 'metrics' | 'complete' | 'cached';
+    current: number;
+    total: number;
+    segment?: number;
+    total_segments?: number;
   } | null>(null);
 
   // Fetch initial dashboard data via HTTP
@@ -389,9 +392,12 @@ export const DashboardPage: React.FC = () => {
         case 'progress': {
           setComputingProgress({
             allocator_id: message.allocator_id,
-            message: message.message,
-            step: message.step,
-            total_steps: message.total_steps,
+            allocator_name: message.allocator_name,
+            phase: message.phase,
+            current: message.current,
+            total: message.total,
+            segment: message.segment,
+            total_segments: message.total_segments,
           });
           break;
         }
@@ -440,6 +446,18 @@ export const DashboardPage: React.FC = () => {
       pendingComputesRef.current.clear();
     };
   }, []);
+
+  // Reset computing state when WebSocket disconnects
+  useEffect(() => {
+    if (status !== 'connected' && isComputing) {
+      // WebSocket disconnected while computing - reset state
+      pendingComputesRef.current.clear();
+      pendingTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
+      pendingTimeoutsRef.current.clear();
+      setIsComputing(false);
+      setComputingProgress(null);
+    }
+  }, [status, isComputing]);
 
   // Merge enabled state into allocators for display (memoized to prevent unnecessary re-renders)
   const allocatorsWithEnabled = useMemo(() => allocators.map(a => ({
@@ -584,7 +602,9 @@ export const DashboardPage: React.FC = () => {
     });
 
     // Send compute request for each enabled allocator
-    for (const allocator of enabledAllocators) {
+    const totalAllocators = enabledAllocators.length;
+    for (let i = 0; i < enabledAllocators.length; i++) {
+      const allocator = enabledAllocators[i];
       pendingComputesRef.current.add(allocator.id);
 
       // Set up 5-minute timeout for this compute
@@ -594,7 +614,7 @@ export const DashboardPage: React.FC = () => {
       }, 5 * 60 * 1000); // 5 minutes
 
       pendingTimeoutsRef.current.set(allocator.id, timeoutId);
-      wsCompute(allocator.id, dateRange, includeDividends);
+      wsCompute(allocator.id, dateRange, includeDividends, i + 1, totalAllocators);
     }
   }, [dateRange, includeDividends, status, wsCompute, cleanupPendingCompute, addToast]);
 
