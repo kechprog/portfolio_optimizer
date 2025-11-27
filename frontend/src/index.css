@@ -72,7 +72,19 @@ html, body, #root {
   width: 100%;
   margin: 0;
   padding: 0;
+}
+
+/* Dashboard layout needs overflow hidden */
+.dashboard-layout {
   overflow: hidden;
+  height: 100%;
+}
+
+/* Landing page needs scrolling */
+.landing-layout {
+  overflow-y: auto;
+  overflow-x: hidden;
+  height: 100%;
 }
 
 body {

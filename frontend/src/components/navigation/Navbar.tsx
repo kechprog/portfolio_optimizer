@@ -24,22 +24,22 @@ export const Navbar: React.FC = () => {
   return (
     <nav className="bg-surface border-b border-border sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
-          <Link to="/" className="flex items-center gap-3">
-            <div className="p-2 bg-accent-muted rounded-lg">
-              <TrendingUp className="w-5 h-5 text-accent" />
+        <div className="flex items-center justify-between h-14 sm:h-16">
+          <Link to="/" className="flex items-center gap-2 sm:gap-3">
+            <div className="p-1.5 sm:p-2 bg-accent-muted rounded-lg">
+              <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 text-accent" />
             </div>
-            <span className="text-lg font-semibold text-text-primary">
+            <span className="text-base sm:text-lg font-semibold text-text-primary">
               Portfolio Optimizer
             </span>
           </Link>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {isAuthenticated ? (
               <>
                 <Link
                   to="/dashboard"
-                  className="hidden sm:flex items-center gap-2 px-4 py-2 text-sm font-medium text-text-secondary hover:text-text-primary transition-colors"
+                  className="hidden sm:flex items-center gap-2 px-3 sm:px-4 py-2 text-sm font-medium text-text-secondary hover:text-text-primary transition-colors"
                 >
                   <LayoutDashboard className="w-4 h-4" />
                   <span>Dashboard</span>
@@ -50,14 +50,14 @@ export const Navbar: React.FC = () => {
               <>
                 <button
                   onClick={handleLogin}
-                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-text-secondary hover:text-text-primary transition-colors"
+                  className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-1.5 sm:py-2 text-sm font-medium text-text-secondary hover:text-text-primary transition-colors"
                 >
                   <LogIn className="w-4 h-4" />
                   <span className="hidden sm:inline">Log In</span>
                 </button>
                 <button
                   onClick={handleSignup}
-                  className="btn-primary"
+                  className="btn-primary text-sm px-3 sm:px-4 py-1.5 sm:py-2"
                 >
                   <UserPlus className="w-4 h-4" />
                   <span className="hidden sm:inline">Sign Up</span>

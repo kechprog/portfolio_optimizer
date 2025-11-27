@@ -42,32 +42,32 @@ const features = [
 
 export const FeaturesSection: React.FC = () => {
   return (
-    <section className="py-20 bg-surface">
+    <section className="py-12 sm:py-16 lg:py-20 bg-surface">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center mb-16">
-          <h2 className="text-3xl sm:text-4xl font-bold text-text-primary mb-4">
+        <div className="text-center mb-10 sm:mb-12 lg:mb-16">
+          <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-text-primary mb-3 sm:mb-4">
             Powerful Features for Smart Investing
           </h2>
-          <p className="text-lg text-text-secondary max-w-2xl mx-auto">
+          <p className="text-base sm:text-lg text-text-secondary max-w-2xl mx-auto px-2">
             Everything you need to build, optimize, and manage your investment portfolio
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
           {features.map((feature, index) => {
             const Icon = feature.icon;
             return (
               <div
                 key={index}
-                className="card hover:shadow-lg transition-shadow duration-300"
+                className="card hover:shadow-lg transition-shadow duration-300 p-4 sm:p-5 lg:p-6"
               >
-                <div className="p-3 bg-accent-muted rounded-lg w-fit mb-4">
-                  <Icon className="w-6 h-6 text-accent" />
+                <div className="p-2.5 sm:p-3 bg-accent-muted rounded-lg w-fit mb-3 sm:mb-4">
+                  <Icon className="w-5 h-5 sm:w-6 sm:h-6 text-accent" />
                 </div>
-                <h3 className="text-xl font-semibold text-text-primary mb-2">
+                <h3 className="text-lg sm:text-xl font-semibold text-text-primary mb-2">
                   {feature.title}
                 </h3>
-                <p className="text-text-secondary">
+                <p className="text-sm sm:text-base text-text-secondary">
                   {feature.description}
                 </p>
               </div>
