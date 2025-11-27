@@ -5,6 +5,8 @@ import { PerformanceChart } from '../components/charts';
 import { AllocatorGrid, PortfolioInfo } from '../components/allocators';
 import { ManualAllocatorModal, MPTAllocatorModal, ConfirmModal } from '../components/modals';
 import { useTheme, useWebSocket } from '../hooks';
+import { useErrorHandler } from '../hooks/useErrorHandler';
+import { useToast } from '../contexts/ToastContext';
 import { fetchDashboard, transformAllocator, transformSettings } from '../services';
 import {
   Allocator,
@@ -55,9 +57,46 @@ function isMinVolatilityAllocatorConfig(config: unknown): config is MinVolatilit
   );
 }
 
+// Validate date range consistency
+interface DateRangeValidationError {
+  isValid: boolean;
+  message?: string;
+}
+
+function validateDateRange(dateRange: DateRange): DateRangeValidationError {
+  // Parse date strings to Date objects for comparison
+  const fitStartDate = new Date(dateRange.fit_start_date);
+  const fitEndDate = new Date(dateRange.fit_end_date);
+  const testEndDate = new Date(dateRange.test_end_date);
+
+  // Check if fit_end_date is after fit_start_date
+  if (fitEndDate <= fitStartDate) {
+    return {
+      isValid: false,
+      message: 'Fit end date must be after fit start date'
+    };
+  }
+
+  // Check if test_end_date is after fit_end_date
+  if (testEndDate <= fitEndDate) {
+    return {
+      isValid: false,
+      message: 'Test end date must be after fit end date'
+    };
+  }
+
+  return { isValid: true };
+}
+
 export const DashboardPage: React.FC = () => {
   // Theme
   useTheme();
+
+  // Error handler
+  const { handleError } = useErrorHandler();
+
+  // Toast notifications
+  const { addToast } = useToast();
 
   // Auth0
   const { getAccessTokenSilently } = useAuth0();
@@ -86,7 +125,7 @@ export const DashboardPage: React.FC = () => {
     compute: wsCompute,
     updateDashboardSettings: wsUpdateDashboardSettings,
     setMessageHandler,
-  } = useWebSocket({ token: wsToken, autoConnect: !!wsToken });
+  } = useWebSocket({ token: wsToken, autoConnect: !!wsToken, onError: handleError });
 
   // Core state - start empty, no mock data
   const [allocators, setAllocators] = useState<Allocator[]>([]);
@@ -512,6 +551,17 @@ export const DashboardPage: React.FC = () => {
 
   // Compute portfolios via WebSocket
   const handleCompute = useCallback(async () => {
+    // Validate date range before proceeding
+    const validation = validateDateRange(dateRange);
+    if (!validation.isValid) {
+      addToast({
+        type: 'error',
+        title: 'Validation Error',
+        message: validation.message || 'Invalid date range'
+      });
+      return;
+    }
+
     // Use ref to get latest allocators and avoid stale closure
     const enabledAllocators = allocatorsRef.current.filter(a => a.enabled);
     if (enabledAllocators.length === 0) return;
@@ -546,7 +596,7 @@ export const DashboardPage: React.FC = () => {
       pendingTimeoutsRef.current.set(allocator.id, timeoutId);
       wsCompute(allocator.id, dateRange, includeDividends);
     }
-  }, [dateRange, includeDividends, status, wsCompute, cleanupPendingCompute]);
+  }, [dateRange, includeDividends, status, wsCompute, cleanupPendingCompute, addToast]);
 
   // Dashboard settings handlers - update local state and persist to server
   const handleDateRangeChange = useCallback((newDateRange: DateRange) => {
