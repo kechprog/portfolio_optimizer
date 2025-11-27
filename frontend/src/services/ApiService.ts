@@ -81,13 +81,12 @@ export async function fetchDashboard(token: string): Promise<DashboardResponse> 
  * Transform API allocator data to frontend Allocator type.
  */
 export function transformAllocator(apiAllocator: DashboardResponse['allocators'][0]): Allocator {
-  const config = apiAllocator.config as Record<string, unknown>;
-
   return {
     id: apiAllocator.id,
     type: apiAllocator.type as Allocator['type'],
-    config: config as Allocator['config'],
-  };
+    config: apiAllocator.config as unknown as Allocator['config'],
+    enabled: apiAllocator.enabled,
+  } as Allocator;
 }
 
 /**
