@@ -54,6 +54,16 @@ class ListAllocators(BaseModel):
     type: Literal["list_allocators"] = "list_allocators"
 
 
+class UpdateDashboardSettings(BaseModel):
+    """Request to update dashboard settings."""
+
+    type: Literal["update_dashboard_settings"] = "update_dashboard_settings"
+    fit_start_date: Optional[str] = None
+    fit_end_date: Optional[str] = None
+    test_end_date: Optional[str] = None
+    include_dividends: Optional[bool] = None
+
+
 # Discriminated union for all client messages
 ClientMessage = Annotated[
     Union[
@@ -62,6 +72,7 @@ ClientMessage = Annotated[
         DeleteAllocator,
         ComputePortfolio,
         ListAllocators,
+        UpdateDashboardSettings,
     ],
     Field(discriminator="type"),
 ]
@@ -130,6 +141,16 @@ class Error(BaseModel):
     allocator_id: Optional[str] = None
 
 
+class DashboardSettingsUpdated(BaseModel):
+    """Response after successfully updating dashboard settings."""
+
+    type: Literal["dashboard_settings_updated"] = "dashboard_settings_updated"
+    fit_start_date: Optional[str] = None
+    fit_end_date: Optional[str] = None
+    test_end_date: Optional[str] = None
+    include_dividends: Optional[bool] = None
+
+
 # Discriminated union for all server messages
 ServerMessage = Annotated[
     Union[
@@ -140,6 +161,7 @@ ServerMessage = Annotated[
         Progress,
         Result,
         Error,
+        DashboardSettingsUpdated,
     ],
     Field(discriminator="type"),
 ]

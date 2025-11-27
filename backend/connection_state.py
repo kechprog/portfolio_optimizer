@@ -47,12 +47,20 @@ class ConnectionState:
     Holds per-connection state for a WebSocket session.
 
     Attributes:
+        auth0_user_id: The Auth0 user ID for the connected user (None if anonymous).
         allocators: Dictionary mapping allocator IDs to allocator instances.
         matrix_cache: Dictionary for caching matrix data during computation.
+        results_cache: Dictionary for caching computation results.
     """
 
-    def __init__(self) -> None:
-        """Initialize empty connection state."""
+    def __init__(self, auth0_user_id: str | None = None) -> None:
+        """
+        Initialize connection state.
+
+        Args:
+            auth0_user_id: The Auth0 user ID for the connected user (optional).
+        """
+        self.auth0_user_id = auth0_user_id
         self.allocators: dict[str, Any] = {}
         self.matrix_cache: dict[str, Any] = {}
         self.results_cache: dict[str, Any] = {}  # Cache for computation results

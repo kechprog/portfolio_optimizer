@@ -9,6 +9,13 @@ interface UseWebSocketOptions {
   token?: string;
 }
 
+interface DashboardSettingsUpdate {
+  fit_start_date?: string;
+  fit_end_date?: string;
+  test_end_date?: string;
+  include_dividends?: boolean;
+}
+
 interface UseWebSocketReturn {
   // State
   status: ConnectionStatus;
@@ -22,6 +29,7 @@ interface UseWebSocketReturn {
   deleteAllocator: (id: string) => void;
   listAllocators: () => void;
   compute: (allocatorId: string, dateRange: DateRange, includeDividends: boolean) => void;
+  updateDashboardSettings: (settings: DashboardSettingsUpdate) => void;
 
   // Event registration
   setMessageHandler: (handler: (message: ServerMessage) => void) => void;
@@ -185,6 +193,14 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
     });
   }, []);
 
+  // Dashboard settings update method
+  const updateDashboardSettings = useCallback((settings: DashboardSettingsUpdate) => {
+    wsServiceRef.current?.send({
+      type: 'update_dashboard_settings',
+      ...settings,
+    });
+  }, []);
+
   return {
     // State
     status,
@@ -198,6 +214,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
     deleteAllocator,
     listAllocators,
     compute,
+    updateDashboardSettings,
 
     // Event registration
     setMessageHandler,

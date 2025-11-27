@@ -10,11 +10,12 @@ import logging
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Union
+from typing import Annotated, Union
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from starlette import status
@@ -23,7 +24,7 @@ from auth import validate_token, AuthError, TokenPayload, is_auth_configured
 from config import WS_HOST, WS_PORT, CORS_ORIGINS
 from connection_state import ConnectionState
 from db import init_db, close_db, get_database_url, async_session_maker
-from db.crud import create_user, delete_user, update_user_activity
+from db.crud import create_user, delete_user, update_user_activity, get_user_dashboard
 from message_handlers import MESSAGE_HANDLERS
 from schemas import (
     ComputePortfolio,
@@ -32,6 +33,7 @@ from schemas import (
     Error,
     ListAllocators,
     UpdateAllocator,
+    UpdateDashboardSettings,
 )
 
 # Configure logging
@@ -97,6 +99,7 @@ MESSAGE_MODELS: dict[str, type] = {
     "delete_allocator": DeleteAllocator,
     "list_allocators": ListAllocators,
     "compute": ComputePortfolio,
+    "update_dashboard_settings": UpdateDashboardSettings,
 }
 
 
@@ -165,7 +168,7 @@ async def websocket_endpoint(
 
     # Accept WebSocket connection after successful authentication
     await websocket.accept()
-    state = ConnectionState()
+    state = ConnectionState(auth0_user_id=auth0_user_id)
 
     # Generate unique session ID for this connection
     session_id = str(uuid.uuid4())
@@ -264,6 +267,78 @@ async def websocket_endpoint(
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+# =============================================================================
+# HTTP API Endpoints
+# =============================================================================
+
+# HTTP Bearer token scheme for API authentication
+http_bearer = HTTPBearer(auto_error=False)
+
+
+async def get_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(http_bearer)]
+) -> TokenPayload:
+    """
+    Dependency to get the current authenticated user from HTTP Bearer token.
+
+    Args:
+        credentials: The HTTP Authorization credentials (Bearer token)
+
+    Returns:
+        TokenPayload: The validated token payload with user info
+
+    Raises:
+        HTTPException: If authentication fails
+    """
+    if not is_auth_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication not configured",
+        )
+
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        payload = await validate_token(credentials.credentials)
+        return payload
+    except AuthError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=e.message,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+@app.get("/api/dashboard")
+async def get_dashboard(
+    current_user: Annotated[TokenPayload, Depends(get_current_user)]
+):
+    """
+    Get the current user's dashboard data (allocators and settings).
+
+    This endpoint returns the complete dashboard state for the authenticated user,
+    including all their allocators and dashboard settings.
+
+    Returns:
+        dict: Dashboard data with allocators and settings
+    """
+    try:
+        async with async_session_maker() as db_session:
+            dashboard_data = await get_user_dashboard(db_session, current_user.sub)
+            return dashboard_data
+    except Exception as e:
+        logger.error(f"Error fetching dashboard for user {current_user.sub}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch dashboard data",
+        )
 
 
 # Serve frontend static files at root (must be last to not override API routes)

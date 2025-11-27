@@ -5,6 +5,7 @@ import { PerformanceChart } from '../components/charts';
 import { AllocatorGrid, PortfolioInfo } from '../components/allocators';
 import { ManualAllocatorModal, MPTAllocatorModal, ConfirmModal } from '../components/modals';
 import { useTheme, useWebSocket } from '../hooks';
+import { fetchDashboard, transformAllocator, transformSettings } from '../services';
 import {
   Allocator,
   AllocatorType,
@@ -83,6 +84,7 @@ export const DashboardPage: React.FC = () => {
     updateAllocator: wsUpdateAllocator,
     deleteAllocator: wsDeleteAllocator,
     compute: wsCompute,
+    updateDashboardSettings: wsUpdateDashboardSettings,
     setMessageHandler,
   } = useWebSocket({ token: wsToken, autoConnect: !!wsToken });
 
@@ -93,12 +95,62 @@ export const DashboardPage: React.FC = () => {
   const [includeDividends, setIncludeDividends] = useState(true);
   const [selectedAllocatorId, setSelectedAllocatorId] = useState<string | null>(null);
   const [isComputing, setIsComputing] = useState(false);
+  const [isLoadingDashboard, setIsLoadingDashboard] = useState(true);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [computingProgress, setComputingProgress] = useState<{
     allocator_id: string;
     message: string;
     step: number;
     total_steps: number;
   } | null>(null);
+
+  // Fetch initial dashboard data via HTTP
+  useEffect(() => {
+    if (!wsToken) return;
+
+    const loadDashboard = async () => {
+      setIsLoadingDashboard(true);
+      setDashboardError(null);
+      try {
+        const dashboardData = await fetchDashboard(wsToken);
+
+        // Transform and set allocators
+        const loadedAllocators = dashboardData.allocators.map((apiAlloc) => {
+          const allocator = transformAllocator(apiAlloc);
+          return allocator;
+        });
+        setAllocators(loadedAllocators);
+
+        // Set enabled state from database
+        const enabledSet = new Set<string>(
+          dashboardData.allocators
+            .filter((a) => a.enabled)
+            .map((a) => a.id)
+        );
+        setEnabledIds(enabledSet);
+
+        // Transform and set settings
+        const { dateRange: loadedDateRange, includeDividends: loadedIncludeDividends } =
+          transformSettings(dashboardData.settings);
+        if (loadedDateRange) {
+          setDateRange(loadedDateRange);
+        }
+        setIncludeDividends(loadedIncludeDividends);
+
+        console.log('Dashboard loaded:', {
+          allocators: loadedAllocators.length,
+          settings: dashboardData.settings,
+        });
+      } catch (error) {
+        console.error('Failed to load dashboard:', error);
+        setDashboardError(error instanceof Error ? error.message : 'Failed to load dashboard');
+      } finally {
+        setIsLoadingDashboard(false);
+      }
+    };
+
+    loadDashboard();
+  }, [wsToken]);
 
   // Track pending computes to know when all are done
   const pendingComputesRef = useRef<Set<string>>(new Set());
@@ -496,6 +548,29 @@ export const DashboardPage: React.FC = () => {
     }
   }, [dateRange, includeDividends, status, wsCompute, cleanupPendingCompute]);
 
+  // Dashboard settings handlers - update local state and persist to server
+  const handleDateRangeChange = useCallback((newDateRange: DateRange) => {
+    setDateRange(newDateRange);
+    // Persist to server if connected
+    if (status === 'connected') {
+      wsUpdateDashboardSettings({
+        fit_start_date: newDateRange.fit_start_date,
+        fit_end_date: newDateRange.fit_end_date,
+        test_end_date: newDateRange.test_end_date,
+      });
+    }
+  }, [status, wsUpdateDashboardSettings]);
+
+  const handleIncludeDividendsChange = useCallback((newValue: boolean) => {
+    setIncludeDividends(newValue);
+    // Persist to server if connected
+    if (status === 'connected') {
+      wsUpdateDashboardSettings({
+        include_dividends: newValue,
+      });
+    }
+  }, [status, wsUpdateDashboardSettings]);
+
   // Close modals
   const closeManualModal = () => {
     setEditingAllocator(null);
@@ -532,6 +607,23 @@ export const DashboardPage: React.FC = () => {
 
   // Connection status display
   const getStatusBanner = () => {
+    // Show dashboard loading/error state
+    if (isLoadingDashboard) {
+      return (
+        <div className="bg-blue-500 text-white text-center py-2 px-4 text-sm font-medium">
+          Loading dashboard...
+        </div>
+      );
+    }
+
+    if (dashboardError) {
+      return (
+        <div className="bg-red-500 text-white text-center py-2 px-4 text-sm font-medium">
+          Failed to load dashboard: {dashboardError}
+        </div>
+      );
+    }
+
     if (status === 'connected') return null;
 
     const statusConfig: Record<Exclude<ConnectionStatus, 'connected'>, { bg: string; text: string; message: string }> = {
@@ -559,11 +651,11 @@ export const DashboardPage: React.FC = () => {
         header={
           <Header
             dateRange={dateRange}
-            onDateRangeChange={setDateRange}
+            onDateRangeChange={handleDateRangeChange}
             includeDividends={includeDividends}
-            onIncludeDividendsChange={setIncludeDividends}
+            onIncludeDividendsChange={handleIncludeDividendsChange}
             onCompute={handleCompute}
-            isComputing={isComputing || status !== 'connected'}
+            isComputing={isComputing || status !== 'connected' || isLoadingDashboard}
             progress={computingProgress}
           />
         }

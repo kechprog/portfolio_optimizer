@@ -2,10 +2,12 @@
 WebSocket message handlers.
 
 Each handler processes a specific message type and sends appropriate responses.
+Allocator operations are persisted to the database for authenticated users.
 """
 
 import asyncio
 import logging
+import uuid
 from datetime import date
 from typing import Any, Dict, Type
 
@@ -17,6 +19,14 @@ from allocators.manual import ManualAllocator
 from allocators.max_sharpe import MaxSharpeAllocator
 from allocators.min_volatility import MinVolatilityAllocator
 from connection_state import ConnectionState, create_compute_cache_key
+from db import async_session_maker
+from db.crud import (
+    create_allocator as db_create_allocator,
+    update_allocator as db_update_allocator,
+    delete_allocator as db_delete_allocator,
+    get_allocators_by_user,
+    create_or_update_dashboard_settings,
+)
 from schemas import (
     AllocatorCreated,
     AllocatorDeleted,
@@ -25,11 +35,13 @@ from schemas import (
     ComputePortfolio,
     CreateAllocator,
     DeleteAllocator,
+    DashboardSettingsUpdated,
     Error,
     ListAllocators,
     Progress,
     Result,
     UpdateAllocator,
+    UpdateDashboardSettings,
 )
 from services.portfolio import calculate_metrics, compute_performance
 from services.price_fetcher import get_price_data
@@ -126,6 +138,9 @@ async def handle_create_allocator(
     """
     Handle allocator creation request.
 
+    For authenticated users, persists the allocator to the database.
+    For anonymous users, stores only in session state.
+
     Args:
         websocket: The WebSocket connection.
         state: The connection state.
@@ -137,12 +152,38 @@ async def handle_create_allocator(
             message.allocator_type, message.config
         )
 
-        # Store both the config and the instance
-        allocator_id = await state.add_allocator(
-            allocator_type=message.allocator_type,
-            config=message.config,
-            allocator_instance=allocator_instance,
-        )
+        # Extract name from config (default to type if not specified)
+        name = message.config.get("name", message.allocator_type)
+
+        # Generate allocator ID
+        allocator_id = str(uuid.uuid4())
+
+        # Persist to database if user is authenticated
+        if state.auth0_user_id:
+            try:
+                async with async_session_maker() as db_session:
+                    await db_create_allocator(
+                        session=db_session,
+                        auth0_user_id=state.auth0_user_id,
+                        name=name,
+                        allocator_type=message.allocator_type,
+                        config=message.config,
+                        enabled=False,
+                        allocator_id=uuid.UUID(allocator_id),
+                    )
+                    await db_session.commit()
+                    logger.debug(f"Persisted allocator {allocator_id} to database")
+            except Exception as db_error:
+                logger.error(f"Failed to persist allocator to database: {db_error}")
+                # Continue with session-only storage
+
+        # Store in session state (for computation)
+        state.allocators[allocator_id] = {
+            "id": allocator_id,
+            "type": message.allocator_type,
+            "config": message.config,
+            "instance": allocator_instance,
+        }
 
         response = AllocatorCreated(
             id=allocator_id,
@@ -162,6 +203,8 @@ async def handle_update_allocator(
 ) -> None:
     """
     Handle allocator update request.
+
+    For authenticated users, persists the update to the database.
 
     Args:
         websocket: The WebSocket connection.
@@ -184,6 +227,23 @@ async def handle_update_allocator(
         # Recreate the allocator instance with the new config
         allocator_type = existing["type"]
         allocator_instance = create_allocator_instance(allocator_type, message.config)
+
+        # Persist to database if user is authenticated
+        if state.auth0_user_id:
+            try:
+                async with async_session_maker() as db_session:
+                    name = message.config.get("name")
+                    await db_update_allocator(
+                        session=db_session,
+                        allocator_id=uuid.UUID(message.id),
+                        auth0_user_id=state.auth0_user_id,
+                        config=message.config,
+                        name=name,
+                    )
+                    await db_session.commit()
+                    logger.debug(f"Persisted allocator update {message.id} to database")
+            except Exception as db_error:
+                logger.error(f"Failed to persist allocator update to database: {db_error}")
 
         # Invalidate cached results for this allocator since config changed
         await state.invalidate_allocator_cache(message.id)
@@ -221,12 +281,28 @@ async def handle_delete_allocator(
     """
     Handle allocator deletion request.
 
+    For authenticated users, removes the allocator from the database.
+
     Args:
         websocket: The WebSocket connection.
         state: The connection state.
         message: The delete allocator message.
     """
     try:
+        # Persist deletion to database if user is authenticated
+        if state.auth0_user_id:
+            try:
+                async with async_session_maker() as db_session:
+                    await db_delete_allocator(
+                        session=db_session,
+                        allocator_id=uuid.UUID(message.id),
+                        auth0_user_id=state.auth0_user_id,
+                    )
+                    await db_session.commit()
+                    logger.debug(f"Deleted allocator {message.id} from database")
+            except Exception as db_error:
+                logger.error(f"Failed to delete allocator from database: {db_error}")
+
         # Invalidate cached results for this allocator
         await state.invalidate_allocator_cache(message.id)
 
@@ -444,6 +520,66 @@ async def handle_compute_portfolio(
         )
 
 
+async def handle_update_dashboard_settings(
+    websocket: WebSocket, state: ConnectionState, message: UpdateDashboardSettings
+) -> None:
+    """
+    Handle dashboard settings update request.
+
+    Persists settings to database for authenticated users.
+
+    Args:
+        websocket: The WebSocket connection.
+        state: The connection state.
+        message: The update dashboard settings message.
+    """
+    try:
+        # Parse dates if provided
+        fit_start = date.fromisoformat(message.fit_start_date) if message.fit_start_date else None
+        fit_end = date.fromisoformat(message.fit_end_date) if message.fit_end_date else None
+        test_end = date.fromisoformat(message.test_end_date) if message.test_end_date else None
+
+        # Persist to database if user is authenticated
+        if state.auth0_user_id:
+            try:
+                async with async_session_maker() as db_session:
+                    settings = await create_or_update_dashboard_settings(
+                        session=db_session,
+                        auth0_user_id=state.auth0_user_id,
+                        fit_start_date=fit_start,
+                        fit_end_date=fit_end,
+                        test_end_date=test_end,
+                        include_dividends=message.include_dividends,
+                    )
+                    await db_session.commit()
+                    logger.debug(f"Updated dashboard settings for user {state.auth0_user_id}")
+
+                    # Send response with the updated settings
+                    response = DashboardSettingsUpdated(
+                        fit_start_date=settings.fit_start_date.isoformat() if settings.fit_start_date else None,
+                        fit_end_date=settings.fit_end_date.isoformat() if settings.fit_end_date else None,
+                        test_end_date=settings.test_end_date.isoformat() if settings.test_end_date else None,
+                        include_dividends=settings.include_dividends,
+                    )
+                    await send_message(websocket, response)
+            except Exception as db_error:
+                logger.error(f"Failed to persist dashboard settings: {db_error}")
+                await send_message(websocket, Error(message=f"Failed to save settings: {str(db_error)}"))
+        else:
+            # For anonymous users, just acknowledge the message
+            response = DashboardSettingsUpdated(
+                fit_start_date=message.fit_start_date,
+                fit_end_date=message.fit_end_date,
+                test_end_date=message.test_end_date,
+                include_dividends=message.include_dividends,
+            )
+            await send_message(websocket, response)
+
+    except Exception as e:
+        logger.error(f"Error updating dashboard settings: {e}")
+        await send_message(websocket, Error(message=str(e)))
+
+
 # Handler registry mapping message types to handler functions
 MESSAGE_HANDLERS = {
     "create_allocator": handle_create_allocator,
@@ -451,4 +587,5 @@ MESSAGE_HANDLERS = {
     "delete_allocator": handle_delete_allocator,
     "list_allocators": handle_list_allocators,
     "compute": handle_compute_portfolio,
+    "update_dashboard_settings": handle_update_dashboard_settings,
 }
