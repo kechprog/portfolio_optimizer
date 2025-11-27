@@ -33,7 +33,8 @@ target_metadata = Base.metadata
 # Set the database URL from environment variable
 database_url = os.getenv("DATABASE_URL")
 if database_url:
-    config.set_main_option("sqlalchemy.url", database_url)
+    # Escape % characters for ConfigParser interpolation
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 else:
     raise ValueError(
         "DATABASE_URL environment variable is not set. "
